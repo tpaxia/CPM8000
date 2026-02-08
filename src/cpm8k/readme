@@ -1,0 +1,36 @@
+12/19/84
+
+The present release of CP/M-8000 you have just recieved is slightly 
+restructured. the bios assembly modules have been setup for conditional
+assembly through 2 modules their names are lbiosasm.8kn and biosasm.8kn
+these have one equate which controls the differences between the loader
+specific and normal bios assembler modules. By doing these modules this
+way the system is reduced by 2k in size and removes the need for duplicate
+files. 
+
+The bios.c module has changed little; added are simple protocall on the 
+serial port. I have also run in to a problem with the new ZCC compiler
+the -D option no longer works so now the loader define must be set to 1 
+at the beginning of bios.c in order to produce a LOADER BIOS.
+
+COPY.Z8K is now provided with the system
+
+A new and working DDT.Z8K that portable and supports floatin point instructions 
+note that there is a new entry in the bios memory region table for ddt..
+
+A new version of the C compiler which fixes numerous bugs in all programming 
+areas. 
+
+A much faster ld8k is provided
+
+A asz8k that supports floating point 
+
+Numerous bug fixes to the library 
+
+At a later date their will be a Segmented library provided
+a newer compiler, assembler,and linker.
+
+ a later date their will be a Segmented library provided
+a newer compiler, assembler,and linker.
+
+

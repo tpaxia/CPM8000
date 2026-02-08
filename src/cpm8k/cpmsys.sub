@@ -1,0 +1,5 @@
+;cpmsys.rel is the relocateable ccp and bdos for a Z8002 processor.
+;make cpm.sys for z8001 systems
+ld8k -w -o cpm.sys bios.rel cpmsys.rel -lcpm
+ cpmsys.rel -lcpm
+

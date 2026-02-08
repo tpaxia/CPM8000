@@ -1,0 +1,131 @@
+# CPM8000 — CP/M-8000 for the Olivetti M20
+
+A port of CP/M-8000 to the Olivetti M20 (Z8001-based), built from the
+original Digital Research distribution disk images using GNU cross-tools.
+
+The BIOS is derived from [4sun5bu/Z8001MB](https://github.com/4sun5bu/Z8001MB),
+adapted for the M20 hardware (different I/O addresses, serial configuration,
+IDE interface, memory map).
+
+## Emulator
+
+The project includes a hosted emulator that runs CP/M-8000 natively on
+an emulated Z8001 CPU, with BDOS and BIOS services provided by the host.
+Drives are mapped to host directories under `drives/`.
+
+```
+make emu
+build/emu/cpm8k
+```
+
+The emulator uses the Z8001's native trap mechanism for all system calls.
+SC instructions trigger hardware traps that dispatch to BIOS assembly
+handlers, which bridge to C++ via I/O port OUT instructions. This allows
+xfer (context transfer) to switch segments correctly via IRET.
+
+See [PROGRESS.md](PROGRESS.md) for detailed architecture documentation.
+
+## Prerequisites
+
+- **z8k-coff binutils** — build GNU Binutils with `--target=z8k-coff`
+- **C++17 compiler** — for the Z8001 emulator and host program
+
+To re-extract sources from the distribution disk images (`make re-extract`):
+- **cpmtools** — `cpmls`, `cpmcp` for extracting files from CP/M disk images
+
+## Quick start
+
+```
+make            # builds tools, converts library, assembles BIOS
+make bios-emu   # build thin BIOS + CCP for emulator
+make emu         # build the hosted emulator binary
+build/emu/cpm8k  # run the emulator
+```
+
+All build artifacts go into `build/`.
+
+## Project structure
+
+```
+CPM8000/
+  distribution/
+    CPM_8000_1.1/     CP/M-8000 1.1 disk images (4 x .IMG)
+  src/
+    cpm8k/            CP/M-8000 sources (originally extracted from disk images)
+    cpm8kemu/         hosted emulator (C++17, runs on macOS/Linux)
+    xoututils/        C tools to convert Zilog x.out format to Z8k-COFF
+  z8000_emu/          Z8001 CPU emulator library
+  bios/
+    z8001/            BIOS for real hardware (adapted from 4sun5bu/Z8001MB)
+    emu/              thin BIOS for the emulator (assembly)
+  build/              all build output (created by make)
+  Makefile            top-level build pipeline
+  LICENSE             BSD 2-Clause
+```
+
+## Build pipeline
+
+The top-level `make` runs these steps in order:
+
+1. **Build tools** — compiles `xarch` and `xout2coff` in `src/xoututils/`
+2. **Convert library** — extracts 129 members from the Zilog x.out `libcpm.a`,
+   converts each to Z8k-COFF, and packs them into a new `build/lib/libcpm.a`
+   with `z8k-coff-ar`
+3. **Convert objects** — converts `fpe.o`, `fpedep.o`, and `cpmsys.o` from
+   x.out to COFF
+4. **Assemble BIOS** — assembles all `.s` files in `bios/z8001/` with `z8k-coff-as`
+5. **Link** — links BIOS objects, `cpmsys.o`, and `-lcpm` into `cpm8k` COFF,
+   then strips to raw binary `cpm8k.bin`
+
+### Make targets
+
+| Target | Description |
+|--------|-------------|
+| `make` | Full build (convert + assemble + link) |
+| `make tools` | Build xoututils only |
+| `make lib` | Convert library and objects only |
+| `make bios` | Assemble and link BIOS (real hardware) |
+| `make bios-emu` | Assemble thin BIOS for emulator |
+| `make emu` | Build the hosted emulator binary |
+| `make clean` | Remove `build/` |
+| `make re-extract` | Re-extract pristine `src/cpm8k/` from distribution images |
+
+## CP/M-8000 sources
+
+The `src/cpm8k/` directory contains the CP/M-8000 system files, originally
+extracted from the distribution disk images in `distribution/CPM_8000_1.1/`.
+These files are checked into the repository and may contain modifications.
+To re-extract pristine originals, run `make re-extract` and review changes
+with `git diff src/cpm8k/`.
+
+## xoututils
+
+The `src/xoututils/` directory contains C tools for working with the Zilog
+x.out object file format used by CP/M-8000:
+
+- **xarch** — extract members from an x.out archive (`.a`)
+- **xout2coff** — convert an x.out object file to Z8k-COFF format
+- **xoutdump** — dump x.out file headers, segments, relocations, and symbols
+
+These are a C port of the Go tools by 4sun5bu
+([xoututils](https://github.com/4sun5bu/xoututils), MIT license).
+
+## BIOS
+
+The `bios/z8001/` directory contains the CP/M-8000 BIOS adapted from
+4sun5bu's Z8001MB project for a machine with M20-like hardware. This is
+**not** the original Olivetti M20 BIOS. See `bios/z8001/CHANGES.md` for
+details and `bios/z8001/z8001mb-to-m20.patch` for the full diff.
+
+## Acknowledgments
+
+- **4sun5bu** — original [Z8001MB](https://github.com/4sun5bu/Z8001MB) BIOS
+  and [xoututils](https://github.com/4sun5bu/xoututils) (MIT license)
+- **Digital Research** — CP/M-8000 1.1, licensed by Lineo, Inc.
+  (see [The Unofficial CP/M Web Site](http://www.cpm.z80.de/))
+
+## License
+
+BSD 2-Clause — see [LICENSE](LICENSE).
+
+CP/M-8000 system files (`cpmsys.rel`, `libcpm.a`) are licensed by Lineo, Inc.

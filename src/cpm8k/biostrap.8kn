@@ -1,0 +1,380 @@
+;********** biostrap.8kn cpm.sys + cpmldr.sys ******
+;* 	Copyright 1984, Digital Research Inc.
+;*
+;*	Trap handlers for CP/M-8000(tm) BIOS
+;*
+;* 821013 S. Savitzky (Zilog) -- created
+;* 821123 D. Dunlop (Zilog)   -- added Olivetti M20-
+;*	  specific code to invalidate track buffer
+;*	  contents when disk drive motor stops
+;*	  (fixes directory-overwrite on disk change)
+;* 830305 D. Sallume (Zilog)  -- added FPE trap
+;*        code.
+;* 840815 R. WEISER (DRI) -- conditional assembly
+;*
+
+__text:	.sect
+
+;****************************************************
+;*
+;* NOTE	
+;*	Trap and interrupt handlers are started up
+;*	in segmented mode.
+;*
+;****************************************************
+
+
+;****************************************************
+;*
+;* Externals 
+;*
+;****************************************************
+
+	.if LOADER
+	.global	_bios	; C portion of Loader Bios
+	.else
+	.global	__bios	;C portion of Normal Bios
+	.endif
+	.global	memsc		;memory-management SC
+	.global	_tbvalid	;disk track buff valid
+	.global	_tbdirty	;disk track buff is dirty
+	.global _tbdsk		;current drive code	
+
+	.global _sysseg, _usrseg, _sysstk, _psap, 
+	.if LOADER
+	.else			; only the normal Bios
+	.global	fp_epu
+	.endif
+
+;****************************************************
+;*
+;* M-20 ROM scratchpad RAM addresses
+;*
+;****************************************************
+
+rtc_ext:  .equ	82000022h	;Place to put address
+				; of list of functions
+				; for each clock tick
+motor_on: .equ	82000020h	;Disk motor timeout
+
+;****************************************************
+;*
+;* Global declarations
+;*
+;****************************************************
+
+	.global	_trapinit
+	.global	_trapvec
+	.global _trap
+
+	.global xfersc
+
+
+;****************************************************
+;*
+;* System Call and General Trap Handler And Dispatch
+;*
+;*	It is assumed that the system runs 
+;*	non-segmented on a segmented CPU.
+;*
+;*	_trap is jumped to segmented, with the 
+;*	following information on the stack:
+;*
+;*		trap type: WORD
+;*		reason:	   WORD
+;*		fcw:	   WORD
+;*		pc:	   LONG
+;*
+;*	The trap handler is called as a subroutine,
+;*	with all registers saved on the stack,
+;*	IN SEGMENTED MODE.  This allows the trap
+;*	handler to be in another segment (with some
+;*	care).  This is useful mainly to the debugger.
+;*
+;*	All registers except rr0 are also passed
+;*	intact to the handler.
+;*
+;****************************************************
+
+__text:	.sect
+
+sc_trap:		;system call trap server
+
+	push	@r14,@r14
+
+
+_trap:
+
+	sub	r15,#30		; push caller state
+	ldm	@r14,r0,#14
+	NONSEG			; go nonsegmented
+	ldctl	r1,NSP
+	ld	nr14(r15),r14
+	ex	r1,nr15(r15)
+
+				; trap# now in r1
+	cpb	rh1,#7Fh	; system call?
+	jr  ne	trap_disp	;	no
+				;	yes: map it
+	clrb	rh1
+	add	r1,#SC0TRAP
+
+;=== need range check ===
+
+trap_disp:			; dispatch
+	sll	r1,#2
+	ldl	rr0,_trapvec(r1)
+	testl	rr0
+	jr  z	_trap_ret	; zero -- no action
+				; else call seg @rr0
+	pushl	@r15,rr0	;  (done via kludge)
+	SEG
+	popl	rr0,@r14
+	calr	trap_1
+	jr	_trap_ret
+
+trap_1:				; jp @rr0
+	pushl	@r14,rr0
+	ret
+
+
+_trap_ret:		;return from trap or interrupt
+
+	NONSEG
+	ld	r1,nr15(r15)	; pop state
+	ld	r14,nr14(r15)
+	ldctl	NSP,r1
+	SEG			; go segmented for the iret.
+	ldm	r0,@r14,#14
+	add	r15,#32
+
+	iret			; return from interrupt
+
+
+
+;****************************************************
+;*
+;* Assorted Trap Handlers
+;*
+;****************************************************
+
+epu_trap:
+	push	@r14,#EPUTRAP
+	jr	_trap
+
+pi_trap:
+	push	@r14,#PITRAP
+	jr	_trap
+
+seg_trap:
+	push	@r14,#SEGTRAP
+	jr	_trap
+
+nmi_trap:
+	push	@r14,#NMITRAP
+	jr	_trap
+
+
+	.if LOADER
+	.else		; not used in Loader Bios
+;****************************************************
+;*
+;* Bios system call handler
+;*
+;****************************************************
+
+
+biossc:			;call bios
+	NONSEG
+				; r3 = operation code
+				; rr4= P1
+				; rr6= P2
+
+	ld	r0,scfcw+4(r15)	; if caller nonseg, normal
+	and	r0,#0C000h
+	jr  nz	seg_ok
+
+	ld	r4,scseg+4(r15)	; then add seg to P1, P2
+	ld	r6,r4
+seg_ok:
+				; set up C stack frame
+;===
+	pushl	@r15,rr6
+	pushl	@r15,rr4
+	push	@r15,r3
+
+				; call C program
+	call	__bios
+
+				; clean stack & return
+	add	r15,#10
+	ldl	cr6+4(r15),rr6	; with long in rr6
+
+	SEG
+	ret
+
+	.endif
+;****************************************************
+;*
+;* Context Switch System Call
+;*
+;*	xfer(context)
+;*	long context;
+;*
+;* context is the physical (long) address of:
+;*	r0
+;*	...
+;*	r13
+;*	r14 (normal r14)
+;*	r15 (normal r15)
+;*	ignored word
+;*	FCW (had better specify normal mode)
+;*	PC segment
+;*	PC offset
+;*
+;* The system stack pointer is not affected.
+;*
+;* Control never returns to the caller.
+;*
+;****************************************************
+
+xfersc:			;enter here from system call
+	SEG
+
+; build frame on system stack
+
+; when called from system call, the frame replaces
+; the caller's context, which will never be resumed.
+
+	inc	r15,#4		;discard return addr
+	ldl	rr4,rr14	;move context
+	ld	r2,#FRAMESZ/2
+	ldir	@r4,@r6,r2
+	jr	_trap_ret	;restore context
+
+
+;****************************************************
+;*
+;* _motor_c -- check if disk motor still running.
+;*	       Entered each clock tick.  Invalidates
+;*	       track buffer when motor stops
+;*	       (Note: runs segmented)
+;*
+;****************************************************
+
+_motor_c:
+	ld	r5,#_tbdsk	;Which disk is it?
+	cp	r5,#2		; is it the hard disk
+	ret	z
+	ldl	rr4,#motor_on	;Motor running?
+	test	@r4
+	ret	nz		;Yes: do nothing
+	ldar	r4,$
+	ld	r5,#_tbdirty	; Is track buff dirty?
+	test	@r4		; Yes...
+	ret	nz		;   ...return without invalidating
+	ld	r5,#_tbvalid
+	clr	@r4		;No: mark track buffer
+	ret			; invalid
+
+; Table of functions run each real time clock tick
+
+_ticktab:
+	.long	-1		;Will contain _motor_c
+	.word	0ffffh		;Terminator
+
+;****************************************************
+;*
+;* _trapinit -- initialize trap system
+;*
+;****************************************************
+
+
+;*
+;* PSA (Program Status Area) structure
+;*
+ps	.equ	8	; size of a program status entry
+			; --- segmented ---
+
+psa_epu	.equ	1*ps	; EPU trap offset
+psa_prv	.equ	2*ps	; priviledged instruction trap
+psa_sc	.equ	3*ps	; system call trap
+psa_seg	.equ	4*ps	; segmentation trap
+psa_nmi	.equ	5*ps	; non-maskable interrupt
+psa_nvi	.equ	6*ps	; non-vectored interrupt
+psa_vi	.equ	7*ps	; vectored interrupt
+psa_vec	.equ	psa_vi+(ps/2)	; vectors
+
+
+_trapinit:
+
+; initialize trap table
+
+	lda	r2,_trapvec
+	ld	r0,#NTRAPS
+	subl	rr4,rr4
+clrtraps:
+	ldl	@r2,rr4
+	inc	r2,#4
+	djnz	r0,clrtraps
+
+	ld	r2,_sysseg
+	.if LOADER 
+	.else 		;not used by Loader Bios
+	lda	r3,biossc
+	ldl	_trapvec+(BIOS_SC+SC0TRAP)*4,rr2
+	.endif
+	lda	r3,memsc
+	ldl	_trapvec+(MEM_SC+SC0TRAP)*4,rr2
+	.if LOADER
+	.else		; not used by Loader Bios
+	lda	r3,fp_epu
+	ldl	_trapvec+EPUTRAP*4,rr2
+	.endif
+
+; initialize some PSA entries.
+;	rr0	PSA entry: FCW	(ints ENABLED)
+;	rr2	PSA entry: PC
+;	rr4	-> PSA slot
+
+	ldl	rr4,_psap
+	SEG
+	ldl	rr0,#0000D800h  ; traps here
+
+	add	r5,#ps		; EPU trap
+	ldar	r2,epu_trap
+	ldm	@r4,r0,#4
+
+	add	r5,#ps		; Priviledged Inst
+	ldar	r2,pi_trap
+	ldm	@r4,r0,#4
+
+	add	r5,#ps		; System Call
+	ldar	r2,sc_trap
+	ldm	@r4,r0,#4
+
+	add	r5,#ps		; segmentation
+	ldar	r2,seg_trap
+	ldm	@r4,r0,#4
+
+	add	r5,#ps		; Non-Maskable Int.
+	ldar	r2,nmi_trap
+	ldm	@r4,r0,#4
+
+; Set up Real-Time Clock external call loc
+
+	ldar	r2,_motor_c
+	ldar	r4,_ticktab
+	ldl	@r4,rr2
+	ldl	rr2,#rtc_ext
+	ldl	@r2,rr4
+	NONSEG
+	ret
+
+;****************************************************
+;****************************************************
+	NONSEG
+	ret
+
+;****************************************************
+;****************************************************

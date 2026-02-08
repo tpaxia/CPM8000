@@ -1,0 +1,55 @@
+;*********************************************
+;Build the assembly modules using conditionals
+;
+__text: .sect
+;
+;by setting the value of the label LOADER false 
+;(0) the normal Bios code will be generated  
+;while setting the label to true (1) will 
+;provide the loader Bios code.
+;
+LOADER .equ	1 	;  1 or 0 which ever
+;
+;
+	.input "biosdefs.8kn"	
+	.input "biosboot.8kn"
+	.input "biosif.8kn"
+	.input "biosio.8kn"
+	.input "biosmem.8kn"
+	.input "biostrap.8kn"
+	.input "syscall.8kn"
+
+
+;****************************************************
+;*
+;* Data
+;*
+;****************************************************
+
+__bss:	.sect
+
+_sysseg: .block 2	;system segment
+_usrseg: .block 2	;user segment
+_sysstk: .block 4	;system stack pointer
+_psap:	 .block 4	;program status area ptr
+
+
+;****************************************************
+;*
+;* Trap vector table
+;*
+;*	entries 0..31 are misc. system traps
+;*	entries 32..47 are system calls 0..15
+;*
+;****************************************************
+
+
+_trapvec:
+	.block NTRAPS*4
+
+;****************************************************
+;****************************************************
+; 	***** 8/15/84 R.F.W. *****
+*********************
+; 	***** 8/15/84 R.F.W. *****
+

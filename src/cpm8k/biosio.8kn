@@ -1,0 +1,111 @@
+;************ biosio.z8k **************************
+;*
+;*	I/O routines for CP/M-8000(tm) BIOS
+;*	for Olivetti M20 (Z8001) system.
+;*
+;* 821013 S. Savitzky (Zilog) -- created.
+;*
+
+__text:	.sect
+
+;****************************************************
+;*
+;* NOTE	The Olivetti PROM routines are segmented.
+;*	The C portion of the BIOS is non-segmented.
+;*
+;*	This assembly-language module is assembled
+;*	non-segmented, and serves as the interface.
+;*
+;*	Segmented operations are well-isolated, and
+;*	are either the same as their non-segmented
+;*	counterparts, or constructed using macros.
+;*
+;****************************************************
+
+	;.input	"biosdefs.8kn"
+
+
+
+;****************************************************
+;*
+;* Global declarations
+;*
+;****************************************************
+
+
+	.global _disk_io
+	.global _crt_put
+	.global _cold_boot
+
+
+				
+
+;****************************************************
+;*
+;* Prom Subroutine Access
+;*
+;****************************************************
+
+_disk_io:	;err=disk_io(drv, cmd, count, blk, addr)
+
+	dec	r15,#14		;save registers
+	ldm	@r15,r8,#7
+
+	ldb	rh7,14+ARG1+1(r15)	;get args
+	ldb	rl7,14+ARG2+1(r15)
+	ld	r8, 14+ARG3(r15)
+	ld	r9, 14+ARG4(r15)
+	ldl	rr10,14+ARG5(r15)
+
+			;rh7 = drive #
+			;rl7 = command
+			;r8  = block count
+			;r9  = block number
+			;rr10 = segmented address
+
+	SEG
+	scall	84000068h
+	NONSEG
+			;r8  = block count not transferred
+			;rh7 = #retries
+			;rl7 = final error code (RETURNED)
+			;rh6 = error retried
+
+	and	r7,#0FFh	;value returned in r7
+
+	ldm	r8,@r15,#7	;restore regs
+	inc	r15,#14
+	ret
+
+
+_crt_put:	;crt_put(char)
+
+	dec	r15,#14		;save registers
+	ldm	@r15,r8,#7
+
+	ld	r1,14+ARG1(r15)	;get arg in r1
+
+	SEG			; SEG clobbers r0
+	ld	r0,r1		;rl0 = char
+	scall	84000080h
+	NONSEG
+
+	ldm	r8,@r15,#7	;restore regs
+	inc	r15,#14
+	ret
+
+
+
+_cold_boot:
+
+	SEG
+	scall	8400008Ch
+	NONSEG
+	ret
+ld_boot:
+
+	SEG
+	scall	8400008Ch
+	NONSEG
+	ret
+

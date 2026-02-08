@@ -1,0 +1,13 @@
+;;;;;;;;;;;;;;;;;;;;;;
+;Make putboot.z8k 
+;03/16/84 RFW
+;;;;;;;;;;;;;;;;;;;;;;
+asz8k -o trk.o trk.8kn
+
+zcc -c -M1 putboot.c
+ld8k -w -i -o putboot.z8k startup.o opt1.o putboot.o trk.o  -lcpm
+era putboot.o
+
+ld8k -w -i -o putboot.z8k startup.o opt1.o putboot.o trk.o  -lcpm
+era putboot.o
+

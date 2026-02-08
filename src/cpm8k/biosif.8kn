@@ -1,0 +1,174 @@
+;********* biosif.8kn for cpm.sys + cpmldr.sys *******
+;* 	Copyright 1984, Digital Research Inc.
+;*
+;* Assembly language interface for CP/M-8000(tm) BIOS
+;*       ----- System-Independent -----
+;*
+;* 821013 S. Savitzky (Zilog) -- split into modules
+;* 820913 S. Savitzky (Zilog) -- created.
+;* 840811 R. Weiser (DRI)   -- conditional assembly
+;*
+
+__text:	.sect
+
+;****************************************************
+;*
+;* NOTE	
+;*	The C portion of the BIOS is non-segmented.
+;*
+;*	This assembly-language module is assembled
+;*	non-segmented, and serves as the interface.
+;*
+;*	Segmented operations are well-isolated, and
+;*	are either the same as their non-segmented
+;*	counterparts, or constructed using macros.
+;*	The resulting code looks a little odd.
+;*
+;****************************************************
+
+
+;****************************************************
+;*
+;* Externals 
+;*
+;****************************************************
+
+	.global _biosinit	;C portion init
+
+	.if  LOADER 			; If LOADER is True then
+	.global _ldcpm		; Load the system into memory
+	
+	.else				; else its the normal bios
+
+	.global _flush		;Flush buffers
+
+	.global ccp		;Command Processor
+
+	.endif				; end conditional
+
+	.global	_trapinit	;trap startup
+
+	.global _psap, _sysseg, _sysstk
+
+;****************************************************
+;*
+;* Global declarations
+;*
+;****************************************************
+
+	.global	bios		; initialization
+	.if LOADER			; If Loader stub out _wboot
+	.else
+	.global _wboot		; warm boot
+	.endif
+	.global _input		; input a byte
+	.global _output		; output a byte
+
+;****************************************************
+;*
+;* Bios Initialization and Entry Point
+;*
+;*	This is where control comes after boot.
+;* 	If (the label LOADER is true 1)
+;* 	Control is transferred to -ldcpm
+;* 	else
+;*	Control is transferred to the ccp.
+;*
+;*	We get here from bootstrap with:
+;*		segmented mode
+;*		valid stack pointer
+;*		valid PSA in RAM
+;*
+;****************************************************
+
+bios:
+
+; enter in segmented mode.  
+; Get system (PC) segment into r4
+
+	DI	VI,NVI
+	calr	kludge	; get PC segment on stack
+kludge:	popl	rr4, @r14
+
+; get PSAP into rr2.
+
+	ldctl	r2, PSAPSEG
+	ldctl	r3, PSAPOFF
+
+; go non-segmented.  save PSAP, system segment,
+; system stack pointer (in system segment, please)
+
+	NONSEG
+
+	ldl	_psap, rr2
+	ld	_sysseg, r4
+	ld	r14,_sysseg
+	ldl	_sysstk, rr14
+
+	.if LOADER
+	.else
+;  set up system stack so that a return will warm boot
+
+	push	@r15,#_wboot
+	.endif
+; set up traps, then enable interrupts
+
+	call	_trapinit
+	EI	VI,NVI
+
+; set up C part of Bios
+
+	call	_biosinit
+
+; Turn control over to command processor
+	.if LOADER
+	jp	_ldcpm  ; do Program load
+	.else
+	jp	ccp
+
+
+;*****************************************************
+;*
+;* Warm Boot
+;*
+;*	flush buffers and initialize Bios
+;*	then transfer to CCP
+;*
+;*****************************************************
+
+_wboot:
+	call	_flush
+	call	_biosinit
+	ldl	rr14,_sysstk
+	jp	ccp
+
+	.endif
+
+;****************************************************
+;*
+;* I/O port operations
+;*
+;* int = input(port: int)
+;* output (port, data: int)
+;*
+;****************************************************
+
+_input:
+	ld	r2,ARG1(r15)
+	subl	rr6,rr6
+	inb	rl7,@r2
+	ldb	rl6,rl7
+	ret
+
+
+_output:
+	ld	r2,ARG1(r15)
+	ld	r3,ARG2(r15)
+	outb	@r2,rl3
+	ret
+
+
+;*****************************************************
+;*****************************************************
+******
+

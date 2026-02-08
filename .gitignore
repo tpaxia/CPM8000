@@ -1,0 +1,23 @@
+# Build output
+/build/
+
+# Untracked reference material
+/other/
+
+# Emulator runtime drive directories
+/drives/
+
+# Emulator output logs
+emu_stderr.txt
+emu_stdout.txt
+
+# macOS
+.DS_Store
+
+# Editor/IDE
+.vscode/
+*.swp
+*~
+
+# Claude settings
+.claude/

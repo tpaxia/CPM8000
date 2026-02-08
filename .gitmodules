@@ -1,0 +1,3 @@
+[submodule "z8000_emu"]
+	path = z8000_emu
+	url = git@github.com:tpaxia/z8000_emu.git
