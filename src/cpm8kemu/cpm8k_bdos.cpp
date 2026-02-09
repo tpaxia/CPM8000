@@ -1,4 +1,5 @@
 #include "cpm8k_bdos.h"
+#include "cpm8k_mem.h"
 #include "cpm8k_console.h"
 #include <cstdio>
 #include <cstring>
@@ -9,6 +10,45 @@ static constexpr uint16_t CPM8K_VERSION = 0x1422;
 
 // Current caller's segment (set at start of bdos_handler from PC)
 static uint8_t s_caller_seg = 0x0A;
+
+// Console column tracking (for tab expansion, matching real BDOS GBL.column)
+static uint16_t s_column = 0;
+
+// Chain-to-program state (BDOS function 47)
+// Real BDOS saves GBL.chainp pointing to the DMA buffer; on the next
+// readline (BDOS func 10) it feeds the command from chainp instead of
+// the console.  We copy the DMA content into a local buffer because
+// our warm-boot path clears the basepage area.
+static bool    s_chain_pending = false;
+static uint8_t s_chain_buf[128];
+static uint8_t s_chain_len = 0;
+
+// Exception vector table (BDOS function 61)
+// 18 entries: indices 0-9 for vecnum 2-11, indices 10-17 for vecnum 32-39
+static uint32_t s_excvec[18] = {};
+
+// TPA limits (BDOS function 63)
+// Temporary and permanent boundaries (segmented addresses)
+static uint32_t s_tpa_lt = 0;  // TPA lower (temporary)
+static uint32_t s_tpa_ht = 0;  // TPA upper (temporary)
+static uint32_t s_tpa_lp = 0;  // TPA lower (permanent)
+static uint32_t s_tpa_hp = 0;  // TPA upper (permanent)
+
+// Cooked console output: expands tabs, tracks column (matches real BDOS cookdout)
+static void console_cooked_out(uint8_t ch)
+{
+    if (ch == 0x09) { // Tab: expand to next multiple of 8
+        do {
+            console_out(' ');
+            s_column++;
+        } while (s_column & 7);
+    } else {
+        console_out(ch);
+        if (ch >= ' ') s_column++;
+        else if (ch == 0x0D) s_column = 0;
+        else if (ch == 0x08) { if (s_column > 0) s_column--; }
+    }
+}
 
 // Read/write bytes in the caller's segment
 static uint8_t cpu_read_byte(SegmentedMemory& mem, uint16_t addr)
@@ -33,7 +73,7 @@ static void bdos_c_read(z8002_device& cpu)
 static void bdos_c_write(z8002_device& cpu)
 {
     uint8_t ch = cpu.get_reg(7) & 0xFF;
-    console_out(ch);
+    console_cooked_out(ch);
 }
 
 static void bdos_c_rawio(z8002_device& cpu)
@@ -67,7 +107,7 @@ static void bdos_c_writestr(z8002_device& cpu, SegmentedMemory& mem)
     for (int i = 0; i < 0xFFFF; i++) {
         uint8_t ch = cpu_read_byte(mem, addr + i);
         if (ch == '$') break;
-        console_out(ch);
+        console_cooked_out(ch);
     }
 }
 
@@ -80,6 +120,23 @@ static void bdos_c_readstr(z8002_device& cpu, SegmentedMemory& mem)
 
     uint8_t count = 0;
     uint16_t data_addr = buf_addr + 2;
+
+    // Chain-to-program: feed command from chain buffer instead of console
+    // (matches real BDOS readline() behavior when GBL.chainp is set)
+    if (s_chain_pending) {
+        count = s_chain_len;
+        if (count > max_len) count = max_len;
+        for (uint8_t i = 0; i < count; i++) {
+            uint8_t ch = s_chain_buf[i];
+            console_cooked_out(ch);
+            cpu_write_byte(mem, data_addr + i, ch);
+        }
+        cpu_write_byte(mem, data_addr + count, 0);
+        cpu_write_byte(mem, buf_addr + 1, count);
+        cpu.set_reg(7, count);
+        s_chain_pending = false;
+        return;
+    }
 
     while (count < max_len) {
         uint8_t ch = console_in();
@@ -121,13 +178,15 @@ static void bdos_c_readstr(z8002_device& cpu, SegmentedMemory& mem)
             }
             continue;
         }
-        if (ch == 0x03) { // Ctrl-C
-            console_out('^');
-            console_out('C');
-            console_out('\r');
-            console_out('\n');
-            count = 0;
-            break;
+        if (ch == 0x03) { // Ctrl-C - warmboot (matches real BDOS)
+            console_cooked_out('^');
+            console_cooked_out('C');
+            console_cooked_out('\r');
+            console_cooked_out('\n');
+            extern bool g_warm_boot;
+            g_warm_boot = true;
+            cpu.request_halt();
+            return;
         }
         if (ch == 0x15) { // Ctrl-U (cancel line)
             console_out('\r');
@@ -207,7 +266,7 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
     uint16_t fcb_offset = fcbaddr & 0xFFFF;
     uint8_t  tpa_seg    = (pgldaddr >> 16) & 0x7F;
     uint16_t tpa_base   = pgldaddr & 0xFFFF;
-    uint32_t tpa_len    = pgtop; // Length of TPA region
+    (void)pgtop; // TPA limits from LPB are ignored (matching real BDOS)
 
     // Find the open file
     FILE* fp = fs.get_open_fp(fcb_offset);
@@ -261,102 +320,119 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
     const uint8_t* code_data = fbuf + 16 + num_segs * 4;
     long code_offset = 0;
 
-    // For non-segmented combined I/D: load everything sequentially into TPA
     const int BPLEN = 256;     // basepage size
     const int DEFSTACK = 256;  // default stack
+    const uint32_t SEGLEN = 0x10000;
 
-    uint32_t load_offset = 0;  // Current offset within TPA
+    // For split I/D:
+    //   code_load_seg = 0x0A (d_map → 0x10000 = code area, same phys as seg 8 i_map)
+    //   data_load_seg = 0x08 (d_map → 0x20000 = data area)
+    //   exec_seg      = 0x08 (execution: i_map → code @ 0x10000, d_map → data @ 0x20000)
+    // For combined I/D: everything goes to tpa_seg (usually 0x0A)
+    uint8_t code_load_seg = tpa_seg;  // segment used to LOAD code (via data writes)
+    uint8_t data_load_seg = tpa_seg;  // segment used to LOAD data (via data writes)
+    uint8_t exec_seg      = tpa_seg;  // segment used to EXECUTE (goes in PC/basepage)
+    if (split) {
+        code_load_seg = 0x0A; // d_map → 0x10000 = same phys as seg 8 i_map
+        data_load_seg = 0x08; // d_map → 0x20000 = split data area
+        exec_seg      = 0x08; // i_map → 0x10000 (code), d_map → 0x20000 (data)
+    }
+
+    uint32_t code_load_offset = 0; // Current offset within code segment
+    uint32_t data_load_offset = 0; // Current offset within data segment
     uint32_t text_loc = 0, text_size = 0;
     uint32_t data_loc = 0, data_size = 0;
     uint32_t bss_loc = 0, bss_size = 0;
-    uint32_t seg_size = 0;     // Total loaded size (for limit checking)
-
-    // Maximum loadable area
-    uint32_t max_load = (tpa_len > 0 ? tpa_len : 0xFFFE) - BPLEN - DEFSTACK;
+    uint32_t stk_size = DEFSTACK;
 
     for (int i = 0; i < num_segs; i++) {
         uint16_t slen = segs[i].length;
         uint8_t  stype = segs[i].type;
 
+        // Determine target segment: for split I/D, CONST/DATA/BSS/STACK go to data seg
+        bool to_data = split && (stype == 4 || stype == 5 || stype == 1 || stype == 2);
+        uint8_t  target_seg = to_data ? data_load_seg : code_load_seg;
+        uint32_t& load_off  = to_data ? data_load_offset : code_load_offset;
+
         switch (stype) {
         case 3: // CODE
         case 6: // CDMIX
         case 7: // CDMIX_P
-            if (text_size == 0) text_loc = load_offset;
+            if (text_size == 0) text_loc = load_off;
             text_size += slen;
-            // Copy code data to TPA
             for (uint16_t j = 0; j < slen; j++) {
-                mem.write_byte((uint32_t(tpa_seg) << 16) | (tpa_base + load_offset + j),
+                mem.write_byte((uint32_t(target_seg) << 16) | (tpa_base + load_off + j),
                                code_data[code_offset + j]);
             }
-            load_offset += slen;
+            load_off += slen;
             code_offset += slen;
             break;
 
         case 4: // CONST
         case 5: // DATA
-            if (data_size == 0) data_loc = load_offset;
+            if (data_size == 0) data_loc = load_off;
             data_size += slen;
-            // Copy data to TPA
             for (uint16_t j = 0; j < slen; j++) {
-                mem.write_byte((uint32_t(tpa_seg) << 16) | (tpa_base + load_offset + j),
+                mem.write_byte((uint32_t(target_seg) << 16) | (tpa_base + load_off + j),
                                code_data[code_offset + j]);
             }
-            load_offset += slen;
+            load_off += slen;
             code_offset += slen;
             break;
 
         case 1: // BSS - no data in file
-            if (bss_size == 0) bss_loc = load_offset;
+            if (bss_size == 0) bss_loc = load_off;
             bss_size += slen;
-            // Zero-fill BSS
             for (uint16_t j = 0; j < slen; j++) {
-                mem.write_byte((uint32_t(tpa_seg) << 16) | (tpa_base + load_offset + j), 0);
+                mem.write_byte((uint32_t(target_seg) << 16) | (tpa_base + load_off + j), 0);
             }
-            load_offset += slen;
+            load_off += slen;
             break;
 
-        case 2: // STACK - no data in file, just adjusts stack size
+        case 2: // STACK - no data in file, adjusts stack size
+            stk_size += slen;
             break;
         }
-        seg_size = load_offset;
     }
 
-    if (seg_size > max_load) {
+    // Check size limits
+    uint32_t data_seg_used = split ? data_load_offset : code_load_offset;
+    uint32_t data_seg_limit = SEGLEN - BPLEN - stk_size;
+    if (data_seg_used > data_seg_limit) {
         fprintf(stderr, "PGMLD: program too large (%u > %u)\n",
-                (unsigned)seg_size, (unsigned)max_load);
+                (unsigned)data_seg_used, (unsigned)data_seg_limit);
         delete[] fbuf;
         return 2; // NOMEM
     }
 
     // Calculate basepage and stack locations (matching real BDOS pgmld.c)
-    // stkloc = segment_base + SEGLEN - BPLEN - stksiz
-    // Real BDOS uses full 64K segment size, ignoring TPA limits in LPB
-    const uint32_t SEGLEN = 0x10000;
-    uint32_t segment_base = (uint32_t(tpa_seg) << 16) | tpa_base;
-    uint32_t stkloc = segment_base + SEGLEN - BPLEN - DEFSTACK;
+    // stkloc = data_segment_base + SEGLEN - BPLEN - stksiz
+    // Basepage and stack always go in the data segment
+    uint32_t data_segment_base = (uint32_t(data_load_seg) << 16) | tpa_base;
+    uint32_t stkloc = data_segment_base + SEGLEN - BPLEN - stk_size;
 
     uint32_t bp_addr = stkloc;
-    // stackptr = stkloc - sizeof(ustack), where ustack is 4 bytes for non-seg
     uint32_t sp_addr = stkloc - (segmented ? 8 : 4);
 
     // Write basepage (256 bytes, big-endian)
-    // Clear it first
     for (int i = 0; i < BPLEN; i++)
         mem.write_byte(bp_addr + i, 0);
 
-    // Basepage fields (all big-endian 32-bit):
-    uint32_t code_addr = (uint32_t(tpa_seg) << 16) | (tpa_base + text_loc);
-    uint32_t data_addr_val = (uint32_t(tpa_seg) << 16) | (tpa_base + data_loc);
-    uint32_t bss_addr  = (uint32_t(tpa_seg) << 16) | (tpa_base + bss_loc);
-    // Free space = segment limit - loaded size (matching real BDOS)
-    uint32_t seg_limit = SEGLEN - BPLEN - DEFSTACK;
-    uint32_t free_len  = (seg_size < seg_limit) ? (seg_limit - seg_size) : 0;
+    // Basepage fields (matching real BDOS setbase())
+    // For split I/D: lcode/ltpa use exec_seg, ldata/lbss use data_load_seg
+    uint32_t code_addr = (uint32_t(exec_seg) << 16) | (tpa_base + text_loc);
+    uint32_t data_addr_val = (uint32_t(data_load_seg) << 16) | (tpa_base + data_loc);
+    uint32_t bss_addr;
+    if (bss_size > 0)
+        bss_addr = (uint32_t(data_load_seg) << 16) | (tpa_base + bss_loc);
+    else
+        bss_addr = data_addr_val + data_size; // bssloc = dataloc + datasiz
+    uint32_t free_len = (data_seg_used < data_seg_limit) ? (data_seg_limit - data_seg_used) : 0;
 
-    // 0x00: ltpa (low TPA address)
-    mem.write_word(bp_addr + 0, tpa_seg);
-    mem.write_word(bp_addr + 2, tpa_base);
-    // 0x04: htpa (= stackptr, per real BDOS: bp.htpa = mylpb.stackptr)
+    // 0x00: ltpa (= lcode for non-segmented, per real BDOS)
+    mem.write_word(bp_addr + 0, code_addr >> 16);
+    mem.write_word(bp_addr + 2, code_addr & 0xFFFF);
+    // 0x04: htpa (= stackptr)
     mem.write_word(bp_addr + 4, (sp_addr >> 16) & 0xFFFF);
     mem.write_word(bp_addr + 6, sp_addr & 0xFFFF);
     // 0x08: lcode
@@ -384,7 +460,7 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
     // Write LPB return values
     uint16_t flags = (split ? 0x4000 : 0) | (segmented ? 0x2000 : 0);
 
-    // pgldaddr: overwrite with actual starting PC address
+    // pgldaddr: actual starting PC address (code segment)
     mem.write_word(lpb_addr + 4, code_addr >> 16);
     mem.write_word(lpb_addr + 6, code_addr & 0xFFFF);
     // bpaddr
@@ -398,6 +474,37 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
 
     delete[] fbuf;
     return 0; // GOOD
+}
+
+// --- BDOS Function 47: P_CHAIN (Chain to Program) ---
+// Saves the command line from the DMA buffer and warm boots.
+// On the next readline (BDOS func 10), the saved command is fed to
+// the CCP instead of reading from the console.  The CCP then loads
+// and runs the named program normally.
+// (Matches real BDOS: GBL.chainp = GBL.dmaadr; warmboot(0);)
+
+static void bdos_p_chain(SegmentedMemory& mem, CpmFileSystem& fs,
+                         z8002_device& cpu)
+{
+    // Read command line from DMA buffer: [length][chars...]
+    uint32_t dma_addr = fs.get_dma();
+    s_chain_len = mem.read_byte(dma_addr);
+    if (s_chain_len > 126) s_chain_len = 126;
+    for (int i = 0; i < s_chain_len; i++)
+        s_chain_buf[i] = mem.read_byte(dma_addr + 1 + i);
+    s_chain_pending = true;
+
+    // Warm boot (matching real BDOS: warmboot(0))
+    extern bool g_warm_boot;
+    g_warm_boot = true;
+    cpu.request_halt();
+}
+
+void bdos_init(uint32_t tpa_low, uint32_t tpa_high)
+{
+    s_tpa_lt = s_tpa_lp = tpa_low;
+    s_tpa_ht = s_tpa_hp = tpa_high;
+    memset(s_excvec, 0, sizeof(s_excvec));
 }
 
 bool bdos_handler(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
@@ -417,6 +524,10 @@ bool bdos_handler(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
 
     switch (func) {
     case 0: { // P_TERMCPM - warm boot
+        // Reset exception vectors and restore TPA limits (matching real BDOS)
+        memset(s_excvec, 0, sizeof(s_excvec));
+        s_tpa_lt = s_tpa_lp;
+        s_tpa_ht = s_tpa_hp;
         // Signal warm boot so main loop restarts the CCP
         extern bool g_warm_boot;
         g_warm_boot = true;
@@ -447,6 +558,13 @@ bool bdos_handler(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
         bdos_c_rawio(cpu);
         return true;
 
+    case 7: // Get I/O Byte (return 0 — no physical I/O redirection)
+        cpu.set_reg(7, 0);
+        return true;
+
+    case 8: // Set I/O Byte (ignore — no physical I/O redirection)
+        return true;
+
     case 9: // C_WRITESTR
         bdos_c_writestr(cpu, mem);
         return true;
@@ -473,10 +591,11 @@ bool bdos_handler(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
         cpu.set_reg(7, 0);
         return true;
 
-    case 15: // F_OPEN
+    case 15: { // F_OPEN
         result = fs.file_open(param_lo);
         cpu.set_reg(7, result);
         return true;
+    }
 
     case 16: // F_CLOSE
         result = fs.file_close(param_lo);
@@ -540,6 +659,11 @@ bool bdos_handler(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
         cpu.set_reg_long(6, 0);
         return true;
 
+    case 28: // DRV_SETRO - write protect current disk
+        fs.set_drive_ro(fs.get_current_drive());
+        cpu.set_reg(7, 0);
+        return true;
+
     case 29: // DRV_ROVEC
         cpu.set_reg(7, fs.get_rovec());
         return true;
@@ -553,12 +677,10 @@ bool bdos_handler(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
         return true;
 
     case 32: // F_USERNUM - get/set user number
-        if (param_lo == 0xFF) {
-            cpu.set_reg(7, fs.get_user());
-        } else {
-            fs.set_user(param_lo & 0x0F);
-            cpu.set_reg(7, 0);
-        }
+        // Real BDOS: any value <= 15 sets the user number; always returns current
+        if ((param_lo & 0xFF) <= 15)
+            fs.set_user(param_lo & 0xFF);
+        cpu.set_reg(7, fs.get_user());
         return true;
 
     case 33: // F_READRAND
@@ -591,10 +713,73 @@ bool bdos_handler(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
         cpu.set_reg(7, result);
         return true;
 
+    case 46: { // DRV_FREESPACE - get disk free space
+        // Write free sector count (4 bytes, big-endian) to DMA buffer.
+        // We use host filesystem so report a large fixed value (~8MB).
+        uint32_t dma = fs.get_dma();
+        uint32_t free_sectors = 0x0000FFFE; // ~8MB in 128-byte sectors
+        mem.write_word(dma, free_sectors >> 16);
+        mem.write_word(dma + 2, free_sectors & 0xFFFF);
+        cpu.set_reg(7, 0);
+        return true;
+    }
+
+    case 47: // P_CHAIN - Chain to Program
+        bdos_p_chain(mem, fs, cpu);
+        return true;
+
+    case 48: // F_FLUSH - flush buffers (no-op, host stdio handles flushing)
+        cpu.set_reg(7, 0);
+        return true;
+
     case 59: // PGMLD - Program Load
         result = bdos_pgmld(mem, fs, param_lo);
         cpu.set_reg(7, result);
         return true;
+
+    case 61: { // Set Exception Vector
+        // EPB: [vecnum:2][newvec:4][oldvec:4] at rr6 in caller's segment
+        uint32_t epb = (uint32_t(s_caller_seg) << 16) | param_lo;
+        int16_t vecnum = (int16_t)mem.read_word(epb);
+        uint32_t newvec = (uint32_t(mem.read_word(epb + 2)) << 16) |
+                           mem.read_word(epb + 4);
+        int i = vecnum - 2;
+        if (i == 32 || i == 33) { cpu.set_reg(7, 0xFFFF); return true; }
+        if (i >= 30 && i <= 37) i -= 20;
+        else if (i < 0 || i > 9) { cpu.set_reg(7, 0xFFFF); return true; }
+        // Return old vector, install new
+        uint32_t oldvec = s_excvec[i];
+        s_excvec[i] = newvec;
+        mem.write_word(epb + 6, oldvec >> 16);
+        mem.write_word(epb + 8, oldvec & 0xFFFF);
+        cpu.set_reg(7, 0);
+        return true;
+    }
+
+    case 63: { // Get/Set TPA Limits
+        // TPAB: [parms:2][low:4][high:4] at rr6 in caller's segment
+        uint32_t tpab = (uint32_t(s_caller_seg) << 16) | param_lo;
+        uint16_t parms = mem.read_word(tpab);
+        if (parms & 1) {
+            // Set TPA limits
+            s_tpa_lt = (uint32_t(mem.read_word(tpab + 2)) << 16) |
+                        mem.read_word(tpab + 4);
+            s_tpa_ht = (uint32_t(mem.read_word(tpab + 6)) << 16) |
+                        mem.read_word(tpab + 8);
+            if (parms & 2) { // Sticky (permanent)
+                s_tpa_lp = s_tpa_lt;
+                s_tpa_hp = s_tpa_ht;
+            }
+        } else {
+            // Get TPA limits
+            mem.write_word(tpab + 2, s_tpa_lt >> 16);
+            mem.write_word(tpab + 4, s_tpa_lt & 0xFFFF);
+            mem.write_word(tpab + 6, s_tpa_ht >> 16);
+            mem.write_word(tpab + 8, s_tpa_ht & 0xFFFF);
+        }
+        cpu.set_reg(7, 0);
+        return true;
+    }
 
     default:
         fprintf(stderr, "BDOS: unimplemented function %d\n", func);

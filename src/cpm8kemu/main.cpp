@@ -11,6 +11,7 @@
 #include "cpm8k_console.h"
 #include "cpm8k_file.h"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -24,7 +25,7 @@ static constexpr uint8_t SEG_TPA  = 0x0A; // TPA merged I/D
 static constexpr uint8_t SEG_SYS  = 0x0B; // System: CCP + BIOS data
 
 // Physical offsets
-static constexpr uint32_t PHYS_TPA = 0x20000;
+static constexpr uint32_t PHYS_TPA = 0x10000;
 static constexpr uint32_t PHYS_SYS = 0x30000;
 
 // System stack top (within system segment)
@@ -46,8 +47,10 @@ uint16_t g_mrt_offset = 0;
 // Warm boot flag (extern'd by cpm8k_bdos.cpp)
 bool g_warm_boot = false;
 
+
 // BIOS entry point (set after loading cpm.sys)
-static uint16_t g_entry_point = 0;
+static uint16_t g_entry_point = 0;   // Cold boot: C runtime startup (clears BSS)
+static uint16_t g_warm_entry  = 0;   // Warm boot: CCP function (preserves BSS)
 static uint16_t g_ccp_size = 0;
 
 // --- COFF loading ---
@@ -93,6 +96,51 @@ static uint16_t read_be16(const uint8_t* p) {
 static uint32_t read_be32(const uint8_t* p) {
     return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
            (uint32_t(p[2]) << 8)  | p[3];
+}
+
+// Find a named symbol in the COFF symbol table.
+// Returns the symbol's value (segmented address), or 0 if not found.
+static uint32_t find_coff_symbol(const uint8_t* buf, long file_size,
+                                  const CoffHeader& hdr, const char* name)
+{
+    if (hdr.symtab_offset == 0 || hdr.num_symbols == 0) return 0;
+
+    size_t name_len = strlen(name);
+    uint32_t strtab_off = hdr.symtab_offset + hdr.num_symbols * 18;
+
+    uint32_t i = 0;
+    while (i < hdr.num_symbols) {
+        uint32_t off = hdr.symtab_offset + i * 18;
+        if (off + 18 > (uint32_t)file_size) break;
+
+        const uint8_t* entry = buf + off;
+
+        bool match = false;
+        uint32_t zeroes = read_be32(entry);
+        if (zeroes == 0) {
+            // String table reference
+            uint32_t str_off = read_be32(entry + 4);
+            uint32_t abs_off = strtab_off + str_off;
+            if (abs_off + name_len < (uint32_t)file_size) {
+                match = (memcmp(buf + abs_off, name, name_len) == 0 &&
+                         buf[abs_off + name_len] == '\0');
+            }
+        } else {
+            // Inline name (up to 8 chars, null-padded)
+            if (name_len <= 8) {
+                match = (memcmp(entry, name, name_len) == 0 &&
+                         (name_len == 8 || entry[name_len] == '\0'));
+            }
+        }
+
+        if (match)
+            return read_be32(entry + 8); // value field
+
+        uint8_t naux = entry[17];
+        i += 1 + naux;
+    }
+
+    return 0;
 }
 
 // Load a COFF binary into memory at the system segment.
@@ -201,10 +249,21 @@ static int load_coff(SegmentedMemory& mem, const char* path, uint32_t phys_base)
         if (end > highest_addr) highest_addr = end;
     }
 
+    // Look for CCP warm boot entry point in symbol table.
+    // On warm boot, we jump directly to ccp() to skip the C runtime
+    // BSS clearing — CCP state (submit flags, subfcb) must survive.
+    uint32_t ccp_sym = find_coff_symbol(buf, file_size, hdr, "ccp");
+    if (ccp_sym) {
+        g_warm_entry = ccp_sym & 0xFFFF;
+        fprintf(stderr, "  Warm boot entry: ccp at 0x%04X\n", g_warm_entry);
+    }
+
     delete[] buf;
 
     // entry_point is a segmented address - extract offset
     g_entry_point = entry_point & 0xFFFF;
+    if (g_warm_entry == 0)
+        g_warm_entry = g_entry_point; // Fallback if symbol not found
     g_ccp_size = highest_addr;
 
     fprintf(stderr, "Loaded %s: entry=0x%04X, size=0x%X\n", path, g_entry_point, highest_addr);
@@ -261,15 +320,16 @@ static uint16_t build_mrt(SegmentedMemory& mem, uint16_t offset)
     write_be32(base + 4, 0x0000FFFE);
     base += 8;
 
-    // Region 3: Split I/D data segment (SEG_TPA = 0x0A)
+    // Region 3: Split I/D data segment (SEG_TPA_SPLIT = 0x08)
     // Data segment for programs with separate I/D spaces
-    write_be32(base, (uint32_t(SEG_TPA) << 16) | 0x0000);
+    // Seg 0x08 d_map → 0x20000 = split data area
+    write_be32(base, (uint32_t(SEG_TPA_SPLIT) << 16) | 0x0000);
     write_be32(base + 4, 0x0000FFFE);
     base += 8;
 
     // Region 4: Data-space access to region 2
     // Allows loading code into the instruction segment via data accesses
-    write_be32(base, (uint32_t(SEG_TPA_SPLIT) << 16) | 0x0000);
+    write_be32(base, (uint32_t(SEG_TPA) << 16) | 0x0000);
     write_be32(base + 4, 0x0000FFFE);
 
     return offset;
@@ -344,7 +404,7 @@ private:
     }
 
     // map_adr: r4=caller_seg_word, r5=space, rr6=addr
-    // Returns mapped segment in r6
+    // Returns mapped segment in r6 (plain segment number; BIOS asm handles format conversion)
     void handle_map_adr() {
         uint16_t r4 = m_cpu.get_reg(4);
         uint16_t r5 = m_cpu.get_reg(5);
@@ -379,6 +439,19 @@ private:
             break;
         }
 
+        // When dispatching a program (space=5, true_prog), reconfigure
+        // normal-mode segment 0 to match the program's I/D layout.
+        // Non-segmented programs use segment 0 for all accesses.
+        if (space == 5 && true_prog) {
+            if (seg == SEG_TPA_SPLIT) {
+                // Split I/D: I-space = code (0x10000), D-space = data (0x20000)
+                m_mem.set_segment(0x00, 0x10000, 0x20000);
+            } else {
+                // Merged I/D: both I and D at TPA (0x10000)
+                m_mem.set_segment_unified(0x00, 0x10000);
+            }
+        }
+
         m_cpu.set_reg(6, seg);
         // r7 (offset) stays the same
     }
@@ -398,8 +471,9 @@ private:
         uint32_t dst = (uint32_t(r4) << 16) | r5;
 
         for (uint32_t i = 0; i < length && i < 0x10000; i++) {
-            uint8_t val = m_mem.read_byte(src + i);
-            m_mem.write_byte(dst + i, val);
+            uint32_t src_phys = m_mem.translate(src + i, 0);
+            uint32_t dst_phys = m_mem.translate(dst + i, 0);
+            m_mem.data()[dst_phys] = m_mem.data()[src_phys];
         }
 
         uint32_t result = dst + length;
@@ -469,23 +543,58 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Create drive directories if they don't exist
+    // Validate drive directories - create if missing, error if path is invalid
     for (int i = 0; i < 4; i++) {
         struct stat st;
         if (stat(drive_paths[i].c_str(), &st) != 0) {
-            mkdir(drive_paths[i].c_str(), 0755);
+            if (mkdir(drive_paths[i].c_str(), 0755) != 0) {
+                fprintf(stderr, "Error: cannot create drive %c: directory '%s': %s\n",
+                        'A' + i, drive_paths[i].c_str(), strerror(errno));
+                return 1;
+            }
+        } else if (!S_ISDIR(st.st_mode)) {
+            fprintf(stderr, "Error: drive %c: path '%s' is not a directory\n",
+                    'A' + i, drive_paths[i].c_str());
+            return 1;
         }
     }
 
     // --- Create system components ---
     SegmentedMemory mem;
-    mem.set_trace(mem_trace);
     g_mem = &mem;
 
+    // Configure MMU segment table (separate I-space and D-space per segment)
+    //   Seg   I-space   D-space   Purpose
+    //   0x00  0x10000   0x10000   Non-seg fallback (= TPA for normal-mode programs)
+    //   0x02  0x00000   0x00000   PSA
+    //   0x08  0x10000   0x20000   Split I/D execution (I != D)
+    //   0x0A  0x10000   0x10000   TPA merged / data-access to split code
+    //   0x0B  0x30000   0x30000   System (CCP)
+    // System-mode segment 0 maps to system area (0x30000) so BIOS handlers
+    // running in non-segmented system mode access system data correctly.
+    mem.set_segment_unified(0x00, 0x10000);
+    mem.set_sys_seg0(0x30000, 0x30000);
+    mem.set_segment_unified(0x02, 0x00000);
+    mem.set_segment(0x08, 0x10000, 0x20000);
+    mem.set_segment_unified(0x0A, 0x10000);
+    mem.set_segment_unified(0x0B, 0x30000);
+
+    // Create separate bus adapters for instruction fetch and data/stack
+    SegBus i_bus(mem, 1); // instruction fetch
+    SegBus d_bus(mem, 0); // data + stack
+    i_bus.set_trace(mem_trace);
+    d_bus.set_trace(mem_trace);
+
     z8001_device cpu;
-    cpu.set_memory(&mem);
+    cpu.set_program_memory(&i_bus);
+    cpu.set_data_memory(&d_bus);
+    cpu.set_stack_memory(&d_bus);
     cpu.set_trace(trace);
     cpu.set_reg_trace(reg_trace);
+
+    // Wire FCW pointer so SegBus can distinguish system/normal mode for segment 0
+    i_bus.set_fcw_ptr(cpu.get_fcw_ptr());
+    d_bus.set_fcw_ptr(cpu.get_fcw_ptr());
 
     CpmFileSystem fs(mem);
     for (int i = 0; i < 4; i++)
@@ -515,27 +624,33 @@ int main(int argc, char* argv[])
     // Write __exit handler at TPA offset 0x0002: SC #2 (BDOS call with func 0 = warm boot)
     // The startup code pushes __exit address on stack as return address.
     // __exit does: ldk r5, #0; sc #2
-    uint32_t exit_phys = PHYS_TPA + 0x0002;
-    mem.data()[exit_phys + 0] = 0xBD; // ldk r5, #0
-    mem.data()[exit_phys + 1] = 0x50;
-    mem.data()[exit_phys + 2] = 0x7F; // sc #2
-    mem.data()[exit_phys + 3] = 0x02;
-    mem.data()[exit_phys + 4] = 0x7A; // halt (safety)
-    mem.data()[exit_phys + 5] = 0x00;
+    // Seg 0x08 and 0x0A instruction fetch both map to phys 0x10000, so one write suffices.
+    static const uint8_t exit_code[] = {0xBD, 0x50, 0x7F, 0x02, 0x7A, 0x00};
+    memcpy(mem.data() + PHYS_TPA + 0x0002, exit_code, sizeof(exit_code));
+
+    // Initialize BDOS state (TPA limits from MRT region 1)
+    bdos_init((uint32_t(SEG_TPA) << 16) | 0x0000,
+              (uint32_t(SEG_TPA) << 16) | 0xFFFE);
 
     // --- Initialize and run ---
     console_init();
 
+    // Cold boot: set initial drive to A
+    fs.set_current_drive(0);
+
     // Boot loop: CCP runs, warm boot restarts it
+    bool cold_boot = true;
     do {
         g_warm_boot = false;
 
-        // Init CPU state:
-        // FCW = 0xC000 (segmented + system mode) - Z8001 starts segmented
-        // PC = system segment, CCP entry point
-        // PSAP = PSA segment, PSA offset
-        // NSP = system stack
-        uint32_t pc = (uint32_t(SEG_SYS) << 16) | g_entry_point;
+        mem.set_segment_unified(0x00, 0x10000);
+
+        // Cold boot: C runtime startup (clears BSS, calls main → ccp)
+        // Warm boot: jump directly to ccp() to preserve BSS state
+        // (CCP keeps submit flags in .data and subfcb in .bss — BSS
+        // must not be cleared on warm boot for SUBMIT to work)
+        uint16_t entry = cold_boot ? g_entry_point : g_warm_entry;
+        uint32_t pc = (uint32_t(SEG_SYS) << 16) | entry;
         cpu.init_state(
             0xC000,           // FCW: segmented + system mode
             pc,               // PC: segmented address
@@ -545,16 +660,20 @@ int main(int argc, char* argv[])
             SYS_STACK_TOP     // NSP offset
         );
 
-        // Reset DMA and drive - CCP runs in system segment
+        cold_boot = false;
+
+        // Reset DMA for CCP (runs in system segment)
+        // Current drive persists across warm boots (matching real BDOS)
         fs.set_caller_seg(SEG_SYS);
         fs.set_dma((uint32_t(SEG_SYS) << 16) | 0x0080);
-        fs.set_current_drive(0);
 
         // Set up basepage for CCP
         setup_basepage(mem);
 
-        // Run
-        cpu.run(-1);
+        // Run until CPU halts (run(-1) only executes ~1M cycles per call)
+        while (!cpu.is_halted()) {
+            cpu.run(-1);
+        }
 
     } while (g_warm_boot);
 

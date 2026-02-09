@@ -12,7 +12,7 @@ static constexpr uint8_t TPA_SEG = 0x0A;
 CpmFileSystem::CpmFileSystem(SegmentedMemory& mem)
     : m_mem(mem), m_current_drive(0), m_user(0),
       m_dma_addr((uint32_t(TPA_SEG) << 16) | 0x0080),
-      m_caller_seg(TPA_SEG)
+      m_caller_seg(TPA_SEG), m_ro_vec(0)
 {
     for (int i = 0; i < MAX_OPEN_FILES; i++)
         m_files[i] = {nullptr, 0, 0, false, ""};
@@ -193,9 +193,14 @@ int CpmFileSystem::find_open_slot()
 
 OpenFile* CpmFileSystem::find_file_by_fcb(uint16_t fcb_addr)
 {
-    for (int i = 0; i < MAX_OPEN_FILES; i++) {
-        if (m_files[i].active && m_files[i].fcb_addr == fcb_addr)
-            return &m_files[i];
+    // Read file handle from FCB allocation map byte AL[1] (offset 17).
+    // We store (slot_index + 1) there during file_open/file_make, so
+    // when the CCP copies an FCB, the handle travels with it.
+    uint8_t handle = mem_read(fcb_addr + FCB_AL + 1);
+    if (handle >= 1 && handle <= MAX_OPEN_FILES) {
+        int slot = handle - 1;
+        if (m_files[slot].active)
+            return &m_files[slot];
     }
     return nullptr;
 }
@@ -218,7 +223,7 @@ void CpmFileSystem::close_search()
 long CpmFileSystem::compute_file_offset(uint16_t fcb_addr)
 {
     uint8_t ex = mem_read(fcb_addr + FCB_EX);
-    uint8_t s2 = mem_read(fcb_addr + FCB_S2);
+    uint8_t s2 = mem_read(fcb_addr + FCB_S2) & 0x3F; // Bits 6-7 are flags, not extent
     uint8_t cr = mem_read(fcb_addr + FCB_CR);
     int extent = (s2 << 5) | (ex & 0x1F);
     return (long)(extent * 128 + cr) * 128;
@@ -248,6 +253,7 @@ void CpmFileSystem::update_fcb_after_read(uint16_t fcb_addr, long offset)
 int CpmFileSystem::file_open(uint16_t fcb_addr)
 {
     std::string path = fcb_to_host_path(fcb_addr);
+
     // Check file exists
     struct stat st;
     if (stat(path.c_str(), &st) != 0) {
@@ -273,7 +279,7 @@ int CpmFileSystem::file_open(uint16_t fcb_addr)
     // Initialize FCB fields
     mem_write(fcb_addr + FCB_EX, 0);
     mem_write(fcb_addr + FCB_S1, 0);
-    mem_write(fcb_addr + FCB_S2, 0);
+    mem_write(fcb_addr + FCB_S2, 0x80); // Write flag: file not written to (matches real BDOS)
     mem_write(fcb_addr + FCB_CR, 0);
 
     // Set record count based on file size
@@ -282,11 +288,11 @@ int CpmFileSystem::file_open(uint16_t fcb_addr)
     int rc = records > 128 ? 128 : records;
     mem_write(fcb_addr + FCB_RC, rc);
 
-    // Clear allocation map
+    // Clear allocation map and store file handle
     for (int i = 0; i < 16; i++)
         mem_write(fcb_addr + FCB_AL + i, 0);
-    // Put a non-zero value in AL[0] so CCP knows file is open
-    mem_write(fcb_addr + FCB_AL, 1);
+    mem_write(fcb_addr + FCB_AL, 1);            // AL[0]: non-zero = file exists
+    mem_write(fcb_addr + FCB_AL + 1, slot + 1); // AL[1]: file handle (1-based)
 
     return 0; // Directory code 0 = success
 }
@@ -302,6 +308,8 @@ int CpmFileSystem::file_close(uint16_t fcb_addr)
         of->fp = nullptr;
     }
     of->active = false;
+    // Clear handle in FCB so stale copies don't match
+    mem_write(fcb_addr + FCB_AL + 1, 0);
     return 0;
 }
 
@@ -328,8 +336,7 @@ int CpmFileSystem::file_search_first(uint16_t fcb_addr)
     m_search.dir_path = m_drive_paths[drive];
     m_search.dirp = opendir(m_search.dir_path.c_str());
     if (!m_search.dirp) {
-        fprintf(stderr, "F_SFIRST: opendir('%s') failed\n", m_search.dir_path.c_str());
-        return 0xFF;
+        return 0xFF; // Drive directory doesn't exist
     }
 
     read_fcb_name(fcb_addr, m_search.search_name);
@@ -418,7 +425,6 @@ int CpmFileSystem::file_read_seq(uint16_t fcb_addr)
     size_t n = fread(buf, 1, 128, of->fp);
     if (n == 0) return 1; // EOF
 
-    // Write to DMA buffer (uses segment from m_dma_addr)
     dma_write_block(0, buf, 128);
 
     // Advance sequential position
@@ -473,7 +479,8 @@ int CpmFileSystem::file_make(uint16_t fcb_addr)
     mem_write(fcb_addr + FCB_CR, 0);
     for (int i = 0; i < 16; i++)
         mem_write(fcb_addr + FCB_AL + i, 0);
-    mem_write(fcb_addr + FCB_AL, 1);
+    mem_write(fcb_addr + FCB_AL, 1);            // AL[0]: non-zero = file exists
+    mem_write(fcb_addr + FCB_AL + 1, slot + 1); // AL[1]: file handle (1-based)
 
     return 0;
 }
@@ -615,14 +622,20 @@ uint16_t CpmFileSystem::get_login_vector()
 
 uint16_t CpmFileSystem::get_rovec()
 {
-    return 0; // No read-only drives
+    return m_ro_vec;
+}
+
+void CpmFileSystem::set_drive_ro(int drive)
+{
+    if (drive >= 0 && drive < 16)
+        m_ro_vec |= (1 << drive);
 }
 
 void CpmFileSystem::reset_all_drives()
 {
     m_current_drive = 0;
-    // Reset DMA to default offset, keeping current caller's segment
-    m_dma_addr = (uint32_t(m_caller_seg) << 16) | 0x0080;
+    m_ro_vec = 0; // Clear read-only flags (matching real BDOS)
+    // Real BDOS does NOT reset DMA address on func 13
 }
 
 void CpmFileSystem::reset_drives(uint16_t /*mask*/)

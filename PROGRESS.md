@@ -1,6 +1,6 @@
 # CP/M-8000 Emulator - Progress & Issues
 
-## Status: Fully functional. CCP, built-in commands, file I/O, and transient programs all work.
+## Status: Fully functional. CCP, built-in commands, file I/O, transient programs, P_CHAIN, and SUBMIT all work.
 
 ## What Works
 - Z8001 CPU emulator with native trap/IRET mechanism for all SC calls
@@ -18,7 +18,12 @@
 - TYPE command displays file contents
 - STAT runs correctly (transient program via xfer)
 - EXIT command quits the emulator; Ctrl-D also works
-- Warm boot cycle works (program exit -> CCP restart)
+- Warm boot cycle works (program exit -> CCP restart, preserves CCP BSS state)
+- Split I/D programs load and execute correctly (separate code/data segments)
+- P_CHAIN (BDOS func 47) chains programs via warm boot with saved command line
+- SUBMIT command works: CCP reads commands from .SUB files across warm boots
+- BDOS functions 0-48, 59, 61, 63 implemented (see cpm8k_bdos.cpp)
+- FCB file handles: slot index stored in FCB AL[1], survives FCB copies
 - Pipe input works: `echo "DIR" | build/emu/cpm8k` correctly lists files
 - Build pipeline: `make emu`
 
@@ -74,6 +79,41 @@ is copied onto the trap stack frame, and IRET naturally pops the full
 32-bit segmented PC + new FCW, changing segments correctly. For
 BDOS/BIOS calls, the assembly handlers bridge to C++ via synchronous
 I/O port OUT instructions.
+
+### 7. Separate I/D address spaces for split I/D programs
+The original memory model used a single mapping per segment and a
+`ProgramBus` hack that dynamically swapped segment 0's mapping for
+instruction fetch. This broke because `map_adr` returned plain segment
+numbers instead of Z8001 native format, so IRET always decoded PC
+segment as 0.
+
+**Fix**: Replaced with a proper dual-table MMU model (`SegmentedMemory`
+with separate `m_imap[]`/`m_dmap[]` per segment). Two `SegBus` adapters
+(instruction fetch, data/stack) are wired to the CPU at startup. No
+dynamic switching needed — the hardware-faithful MMU handles split I/D
+transparently.
+
+### 8. FCB handle tracking for file operations
+The emulator tracked open files by FCB address. When the CCP copied
+an FCB (e.g. `cmdfcb` → `subfcb` for SUBMIT), the copy had a different
+address and `find_file_by_fcb()` couldn't find the open file.
+
+**Fix**: Store a 1-based file slot index (handle) in the FCB allocation
+map byte AL[1] (offset 17) during `file_open`/`file_make`. When the CCP
+copies an FCB, the handle byte travels with it. `find_file_by_fcb()` now
+reads the handle from AL[1] to look up the file slot directly.
+
+### 9. Warm boot cleared CCP BSS, breaking SUBMIT
+On warm boot, the CCP was restarted at the COFF entry point (0x0000),
+which is the C runtime startup. This cleared BSS, destroying `subfcb`
+(the .SUB file FCB copy), while `.data` variables (`submit`, `morecmds`)
+survived — creating an inconsistent state where the CCP thought SUBMIT
+was active but had no file state.
+
+**Fix**: Parse the COFF symbol table during load to find the `ccp`
+function address. On warm boot, jump directly to `ccp()` instead of the
+C runtime startup, preserving all CCP state (both `.data` and `.bss`).
+Cold boot still uses the C runtime entry for proper initialization.
 
 ## Architecture
 
@@ -176,29 +216,44 @@ The `memsc` handler dispatches on the caller's r5 register:
 
 #### src/cpm8kemu/ (Host Emulator)
 - `main.cpp` - Entry point, COFF loader, EmuIO class (I/O port handlers)
-- `cpm8k_bdos.h/.cpp` - BDOS SC #2 handler (functions 0-59)
+- `cpm8k_bdos.h/.cpp` - BDOS SC #2 handler (functions 0-63)
 - `cpm8k_bios.h/.cpp` - BIOS SC #3 handler
 - `cpm8k_console.h/.cpp` - Terminal raw mode I/O
 - `cpm8k_file.h/.cpp` - CP/M file ops -> host filesystem
-- `cpm8k_mem.h` - SegmentedMemory class (512KB, segment translation)
+- `cpm8k_mem.h` - SegmentedMemory (dual I/D MMU tables) + SegBus adapters
 - `Makefile` - Builds cpm8k binary
 
 ### Memory Map
-| Segment | Physical | Purpose |
-|---------|----------|---------|
-| 0x02 | 0x00000 | PSA (at offset 0x100) |
-| 0x08 | 0x10000 | TPA split I/D |
-| 0x0A | 0x20000 | TPA merged I/D |
-| 0x0B | 0x30000 | System: CCP + BIOS data |
+
+Separate I-space and D-space MMU tables per segment, modeled on Z8001
+hardware. System-mode segment 0 maps to the system area (0x30000).
+
+| Segment | I-space | D-space | Purpose |
+|---------|---------|---------|---------|
+| 0x00 | 0x10000 | 0x10000 | Non-seg fallback (normal-mode programs) |
+| 0x02 | 0x00000 | 0x00000 | PSA (at offset 0x100) |
+| 0x08 | 0x10000 | 0x20000 | Split I/D execution (code vs data) |
+| 0x0A | 0x10000 | 0x10000 | TPA merged I/D / data-access to split code |
+| 0x0B | 0x30000 | 0x30000 | System: CCP + BIOS data |
+
+Split I/D loading: code is written via seg 0x0A (D-space → 0x10000),
+which is the same physical memory as seg 0x08 I-space. Data is written
+via seg 0x08 (D-space → 0x20000). Execution uses seg 0x08 (I → code,
+D → data).
 
 ### Key Design Decisions
 - SC calls use Z8001 native trap/IRET mechanism for correct segment switching
 - Assembly trap handlers bridge to C++ via synchronous I/O port OUT
 - Caller's segment extracted from trap frame `scseg` field by assembly
 - xfer overwrites the trap frame and relies on IRET for context switch
-- CCP (seg 0x0B) and user programs (seg 0x0A) both use BDOS
+- CCP (seg 0x0B) and user programs (seg 0x0A/0x08) both use BDOS
 - DMA address includes caller's segment for correct memory access
 - FCB access uses caller's segment via `m_caller_seg`
+- FCB file handles stored in AL[1] byte — survives FCB copies (SUBMIT)
+- Separate I/D MMU tables per segment — no dynamic bus switching needed
+- Warm boot jumps to `ccp()` directly, preserving CCP BSS state
+- Cold boot uses C runtime entry point for proper BSS initialization
+- COFF symbol table parsed at load time to find warm boot entry
 - console_status() returns false for non-tty stdin to prevent BDOS
   from consuming pipe data during output (Ctrl-S/C check)
 
@@ -220,6 +275,7 @@ printf "DIR\nEXIT\n" | build/emu/cpm8k 2>/dev/null
 ```
 
 ## Known Issues / TODO
-- BDOS function 46 (F_GETAZERO) unimplemented (STAT calls it, falls through gracefully)
 - No Ctrl-C signal handling in interactive mode
 - BIOS disk functions are stubs (all file I/O goes through host BDOS)
+- File stale-check removed — if the same FCB address is reused for a
+  different file without closing the previous one, the old slot leaks

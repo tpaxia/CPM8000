@@ -4,6 +4,9 @@
 #include "z8000.h"
 #include "cpm8k_file.h"
 
+// Initialize BDOS state (TPA limits, exception vectors)
+void bdos_init(uint32_t tpa_low, uint32_t tpa_high);
+
 // BDOS function handler for SC #2
 // caller_seg is the segment of the caller (passed from assembly trap handler).
 // Returns true if the syscall was handled.

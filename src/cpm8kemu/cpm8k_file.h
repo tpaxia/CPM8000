@@ -95,6 +95,7 @@ public:
     // Drive operations
     uint16_t get_login_vector();             // Func 24
     uint16_t get_rovec();                    // Func 29
+    void set_drive_ro(int drive);            // Func 28
     void reset_all_drives();                 // Func 13
     void reset_drives(uint16_t mask);        // Func 37
 
@@ -105,6 +106,7 @@ private:
     int m_user;
     uint32_t m_dma_addr; // segmented address for DMA
     uint8_t m_caller_seg; // caller's segment (from PC when SC intercepted)
+    uint16_t m_ro_vec;   // read-only drive vector (bit per drive)
 
     OpenFile m_files[MAX_OPEN_FILES];
     SearchState m_search;
