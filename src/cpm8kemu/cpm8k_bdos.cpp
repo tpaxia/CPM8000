@@ -27,6 +27,93 @@ static uint8_t s_chain_len = 0;
 // 18 entries: indices 0-9 for vecnum 2-11, indices 10-17 for vecnum 32-39
 static uint32_t s_excvec[18] = {};
 
+// BDOS call trace flag
+static bool s_bdos_trace = false;
+
+// Parameter type for trace formatting
+enum class BdosParam {
+    NONE,   // no parameter
+    BYTE,   // r7 low byte (character, drive number, user number)
+    WORD,   // r7 word
+    ADDR,   // rr6 segmented address (r6:r7)
+    FCB,    // rr6 = FCB address, show filename
+};
+
+struct BdosFunc {
+    const char* name;
+    const char* description;
+    BdosParam   param;
+};
+
+// Table indexed by BDOS function number
+static const BdosFunc s_bdos_funcs[] = {
+    [0]  = {"P_TERMCPM",     "Warm boot",                    BdosParam::NONE},
+    [1]  = {"C_READ",        "Console input",                BdosParam::NONE},
+    [2]  = {"C_WRITE",       "Console output",               BdosParam::BYTE},
+    [3]  = {"A_READ",        "Aux input",                    BdosParam::NONE},
+    [4]  = {"A_WRITE",       "Aux output",                   BdosParam::BYTE},
+    [5]  = {"L_WRITE",       "List output",                  BdosParam::BYTE},
+    [6]  = {"C_RAWIO",       "Direct console I/O",           BdosParam::BYTE},
+    [7]  = {"GET_IOBYTE",    "Get I/O byte",                 BdosParam::NONE},
+    [8]  = {"SET_IOBYTE",    "Set I/O byte",                 BdosParam::BYTE},
+    [9]  = {"C_WRITESTR",    "Print string",                 BdosParam::ADDR},
+    [10] = {"C_READSTR",     "Read console buffer",          BdosParam::ADDR},
+    [11] = {"C_STAT",        "Console status",               BdosParam::NONE},
+    [12] = {"S_BDOSVER",     "Return version number",        BdosParam::NONE},
+    [13] = {"DRV_ALLRESET",  "Reset all disks",              BdosParam::NONE},
+    [14] = {"DRV_SET",       "Select disk",                  BdosParam::BYTE},
+    [15] = {"F_OPEN",        "Open file",                    BdosParam::FCB},
+    [16] = {"F_CLOSE",       "Close file",                   BdosParam::FCB},
+    [17] = {"F_SFIRST",      "Search for first",             BdosParam::FCB},
+    [18] = {"F_SNEXT",       "Search for next",              BdosParam::NONE},
+    [19] = {"F_DELETE",      "Delete file",                  BdosParam::FCB},
+    [20] = {"F_READ",        "Read sequential",              BdosParam::FCB},
+    [21] = {"F_WRITE",       "Write sequential",             BdosParam::FCB},
+    [22] = {"F_MAKE",        "Create file",                  BdosParam::FCB},
+    [23] = {"F_RENAME",      "Rename file",                  BdosParam::FCB},
+    [24] = {"DRV_LOGINVEC",  "Return login vector",          BdosParam::NONE},
+    [25] = {"DRV_GET",       "Return current disk",          BdosParam::NONE},
+    [26] = {"F_DMAOFF",      "Set DMA address",              BdosParam::ADDR},
+    [27] = {"DRV_ALLOCVEC",  "Get alloc vector addr",        BdosParam::NONE},
+    [28] = {"DRV_SETRO",     "Write protect disk",           BdosParam::NONE},
+    [29] = {"DRV_ROVEC",     "Get R/O vector",               BdosParam::NONE},
+    [30] = {"F_ATTRIB",      "Set file attributes",          BdosParam::FCB},
+    [31] = {"DRV_DPB",       "Get DPB address",              BdosParam::NONE},
+    [32] = {"F_USERNUM",     "Get/set user number",          BdosParam::BYTE},
+    [33] = {"F_READRAND",    "Read random",                  BdosParam::FCB},
+    [34] = {"F_WRITERAND",   "Write random",                 BdosParam::FCB},
+    [35] = {"F_SIZE",        "Compute file size",            BdosParam::FCB},
+    [36] = {"F_RANDREC",     "Set random record",            BdosParam::FCB},
+    [37] = {"DRV_RESET",     "Reset specific drives",        BdosParam::WORD},
+    [38] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [39] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [40] = {"F_WRITEZF",     "Write random zero fill",       BdosParam::FCB},
+    [41] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [42] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [43] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [44] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [45] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [46] = {"DRV_FREESPACE", "Get disk free space",          BdosParam::BYTE},
+    [47] = {"P_CHAIN",       "Chain to program",             BdosParam::NONE},
+    [48] = {"F_FLUSH",       "Flush buffers",                BdosParam::NONE},
+    [49] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [50] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [51] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [52] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [53] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [54] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [55] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [56] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [57] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [58] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [59] = {"PGMLD",         "Load program",                 BdosParam::ADDR},
+    [60] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [61] = {"S_SETEXCVEC",   "Set exception vector",         BdosParam::ADDR},
+    [62] = {nullptr,         nullptr,                        BdosParam::NONE},
+    [63] = {"S_TPALIMITS",   "Get/set TPA limits",           BdosParam::ADDR},
+};
+static constexpr int NUM_BDOS_FUNCS = sizeof(s_bdos_funcs) / sizeof(s_bdos_funcs[0]);
+
 // TPA limits (BDOS function 63)
 // Temporary and permanent boundaries (segmented addresses)
 static uint32_t s_tpa_lt = 0;  // TPA lower (temporary)
@@ -507,6 +594,67 @@ void bdos_init(uint32_t tpa_low, uint32_t tpa_high)
     memset(s_excvec, 0, sizeof(s_excvec));
 }
 
+void bdos_set_trace(bool enable)
+{
+    s_bdos_trace = enable;
+}
+
+// Extract filename from an FCB at the given offset in the caller's segment
+static void fcb_filename(SegmentedMemory& mem, uint16_t fcb_off, char* buf, size_t buflen)
+{
+    // FCB: byte 0 = drive, bytes 1-8 = name, bytes 9-11 = type
+    uint8_t drv = mem.read_byte((uint32_t(s_caller_seg) << 16) | fcb_off);
+    char name[9], type[4];
+    for (int i = 0; i < 8; i++)
+        name[i] = mem.read_byte((uint32_t(s_caller_seg) << 16) | (fcb_off + 1 + i)) & 0x7F;
+    name[8] = '\0';
+    for (int i = 0; i < 3; i++)
+        type[i] = mem.read_byte((uint32_t(s_caller_seg) << 16) | (fcb_off + 9 + i)) & 0x7F;
+    type[3] = '\0';
+    // Trim trailing spaces
+    for (int i = 7; i >= 0 && name[i] == ' '; i--) name[i] = '\0';
+    for (int i = 2; i >= 0 && type[i] == ' '; i--) type[i] = '\0';
+    char d = drv ? ('A' + drv - 1) : '?';
+    snprintf(buf, buflen, "%c:%.8s.%.3s", d, name, type);
+}
+
+static void bdos_trace_call(uint16_t func, z8002_device& cpu, SegmentedMemory& mem)
+{
+    const BdosFunc* f = (func < NUM_BDOS_FUNCS) ? &s_bdos_funcs[func] : nullptr;
+    const char* name = (f && f->name) ? f->name : "???";
+    const char* desc = (f && f->description) ? f->description : "Unknown";
+    BdosParam ptype = (f && f->name) ? f->param : BdosParam::WORD;
+
+    fprintf(stderr, "BDOS %2d %-14s %-24s", func, name, desc);
+    switch (ptype) {
+    case BdosParam::NONE:
+        break;
+    case BdosParam::BYTE:
+        fprintf(stderr, " %02X", cpu.get_reg(7) & 0xFF);
+        if (func == 2 || func == 4 || func == 5) {
+            uint8_t ch = cpu.get_reg(7) & 0xFF;
+            if (ch >= 0x20 && ch < 0x7F)
+                fprintf(stderr, " '%c'", ch);
+        } else if (func == 14) {
+            fprintf(stderr, " (%c:)", 'A' + (cpu.get_reg(7) & 0x0F));
+        }
+        break;
+    case BdosParam::WORD:
+        fprintf(stderr, " %04X", cpu.get_reg(7));
+        break;
+    case BdosParam::ADDR:
+        fprintf(stderr, " %02X:%04X", cpu.get_reg(6), cpu.get_reg(7));
+        break;
+    case BdosParam::FCB: {
+        char fname[20];
+        fcb_filename(mem, cpu.get_reg(7), fname, sizeof(fname));
+        fprintf(stderr, " %02X:%04X %s", cpu.get_reg(6), cpu.get_reg(7), fname);
+        break;
+    }
+    }
+    fprintf(stderr, "\r\n");
+}
+
 bool bdos_handler(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
 {
     // Register conventions from startup.8kn:
@@ -521,6 +669,9 @@ bool bdos_handler(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
     // Caller's segment is passed from the assembly trap handler via r4
     s_caller_seg = caller_seg;
     fs.set_caller_seg(s_caller_seg);
+
+    if (s_bdos_trace)
+        bdos_trace_call(func, cpu, mem);
 
     switch (func) {
     case 0: { // P_TERMCPM - warm boot

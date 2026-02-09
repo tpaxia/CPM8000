@@ -22,9 +22,9 @@ static constexpr int FCB_S2   = 14;  // Extent counter (high)
 static constexpr int FCB_RC   = 15;  // Record count in current extent
 static constexpr int FCB_AL   = 16;  // Allocation map (16 bytes)
 static constexpr int FCB_CR   = 32;  // Current record
-static constexpr int FCB_R0   = 33;  // Random record (low byte)
+static constexpr int FCB_R0   = 33;  // Random record (MSB, unlike CP/M-80)
 static constexpr int FCB_R1   = 34;  // Random record (mid byte)
-static constexpr int FCB_R2   = 35;  // Random record (high byte)
+static constexpr int FCB_R2   = 35;  // Random record (LSB)
 static constexpr int FCB_SIZE = 36;
 
 // Directory entry size

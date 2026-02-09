@@ -7,6 +7,9 @@
 // Initialize BDOS state (TPA limits, exception vectors)
 void bdos_init(uint32_t tpa_low, uint32_t tpa_high);
 
+// Enable/disable BDOS call tracing to stderr
+void bdos_set_trace(bool enable);
+
 // BDOS function handler for SC #2
 // caller_seg is the segment of the caller (passed from assembly trap handler).
 // Returns true if the syscall was handled.

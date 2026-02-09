@@ -29,10 +29,9 @@ public:
         for (int i = 0; i < NUM_SEGS; i++) {
             m_imap[i] = 0xFFFFFFFF;
             m_dmap[i] = 0xFFFFFFFF;
+            m_sys_imap[i] = 0xFFFFFFFF;
+            m_sys_dmap[i] = 0xFFFFFFFF;
         }
-        // System mode segment 0 defaults (same as normal until configured)
-        m_sys_seg0_imap = 0xFFFFFFFF;
-        m_sys_seg0_dmap = 0xFFFFFFFF;
     }
 
     ~SegmentedMemory() { delete[] m_data; }
@@ -50,12 +49,19 @@ public:
         set_segment(seg, phys, phys);
     }
 
-    // Configure system-mode segment 0 (separate from normal-mode segment 0)
-    // On Z8001, system and normal modes have independent MMU tables.
-    // Segment 0 is used for all non-segmented mode accesses.
-    void set_sys_seg0(uint32_t i_phys, uint32_t d_phys) {
-        m_sys_seg0_imap = i_phys;
-        m_sys_seg0_dmap = d_phys;
+    // Configure system-mode segment override.
+    // When the CPU is in system mode, these mappings take priority.
+    // This models the M20 BIOS behavior where system code and user code
+    // use different segment-to-physical mappings.
+    void set_sys_segment(int seg, uint32_t i_phys, uint32_t d_phys) {
+        if (seg >= 0 && seg < NUM_SEGS) {
+            m_sys_imap[seg] = i_phys;
+            m_sys_dmap[seg] = d_phys;
+        }
+    }
+
+    void set_sys_segment_unified(int seg, uint32_t phys) {
+        set_sys_segment(seg, phys, phys);
     }
 
     // Query segment mappings
@@ -72,12 +78,16 @@ public:
     uint32_t translate(uint32_t addr, int space = 0, bool system_mode = false) const {
         uint8_t seg = (addr >> 16) & 0x7F;
         uint16_t off = addr & 0xFFFF;
-        uint32_t base;
-        if (seg == 0 && system_mode) {
-            base = space ? m_sys_seg0_imap : m_sys_seg0_dmap;
-        } else {
+        uint32_t base = 0xFFFFFFFF;
+        // In system mode, check system-mode overrides first
+        if (system_mode) {
+            base = space ? m_sys_imap[seg] : m_sys_dmap[seg];
+        }
+        // Fall back to normal-mode mapping
+        if (base == 0xFFFFFFFF) {
             base = space ? m_imap[seg] : m_dmap[seg];
         }
+        // Unmapped segments fall back to segment 0x0B (system)
         if (base == 0xFFFFFFFF) {
             base = space ? m_imap[0x0B] : m_dmap[0x0B];
             if (base == 0xFFFFFFFF) return 0;
@@ -136,8 +146,8 @@ private:
     uint8_t* m_data;
     uint32_t m_imap[NUM_SEGS]; // instruction-space segment map (normal mode)
     uint32_t m_dmap[NUM_SEGS]; // data-space segment map (normal mode)
-    uint32_t m_sys_seg0_imap;  // system-mode segment 0 I-space
-    uint32_t m_sys_seg0_dmap;  // system-mode segment 0 D-space
+    uint32_t m_sys_imap[NUM_SEGS]; // system-mode I-space overrides
+    uint32_t m_sys_dmap[NUM_SEGS]; // system-mode D-space overrides
 };
 
 // Bus adapter: routes Z8001 bus accesses through SegmentedMemory

@@ -345,22 +345,6 @@ static uint16_t build_mrt(SegmentedMemory& mem, uint16_t offset)
 //   0x1C: bsslen - BSS length
 //   0x80: command tail (128 bytes): [length][data...]
 
-static void setup_basepage(SegmentedMemory& mem)
-{
-    uint32_t bp_phys = PHYS_TPA; // Basepage at start of TPA segment
-
-    // Clear basepage
-    memset(mem.data() + bp_phys, 0, 256);
-
-    // Offset 0x02: return address (__exit = 0x0002 in TPA)
-    // This is where programs return to on exit
-    mem.data()[bp_phys + 2] = 0x00;
-    mem.data()[bp_phys + 3] = 0x02;
-
-    // Empty command tail
-    mem.data()[bp_phys + 0x80] = 0; // length = 0
-}
-
 // --- Emulator I/O bus ---
 // Assembly trap handlers bridge to C++ via OUT instructions to these ports.
 // The OUT executes synchronously during the trap handler, so we can
@@ -489,6 +473,7 @@ static void usage(const char* prog)
 {
     fprintf(stderr, "Usage: %s [options] [cpm.sys]\n", prog);
     fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -b         Enable BDOS call trace\n");
     fprintf(stderr, "  -t         Enable CPU instruction trace\n");
     fprintf(stderr, "  -r         Enable register trace\n");
     fprintf(stderr, "  -m         Enable memory bus trace\n");
@@ -502,14 +487,16 @@ static void usage(const char* prog)
 int main(int argc, char* argv[])
 {
     const char* sys_file = nullptr;
+    bool bdos_trace = false;
     bool trace = false;
     bool reg_trace = false;
     bool mem_trace = false;
     std::string drive_paths[4] = {"drives/A", "drives/B", "drives/C", "drives/D"};
 
     int opt;
-    while ((opt = getopt(argc, argv, "trmA:B:C:D:h")) != -1) {
+    while ((opt = getopt(argc, argv, "btrmA:B:C:D:h")) != -1) {
         switch (opt) {
+        case 'b': bdos_trace = true; break;
         case 't': trace = true; break;
         case 'r': reg_trace = true; break;
         case 'm': mem_trace = true; break;
@@ -573,10 +560,11 @@ int main(int argc, char* argv[])
     // System-mode segment 0 maps to system area (0x30000) so BIOS handlers
     // running in non-segmented system mode access system data correctly.
     mem.set_segment_unified(0x00, 0x10000);
-    mem.set_sys_seg0(0x30000, 0x30000);
+    mem.set_sys_segment_unified(0x00, 0x30000);
     mem.set_segment_unified(0x02, 0x00000);
     mem.set_segment(0x08, 0x10000, 0x20000);
     mem.set_segment_unified(0x0A, 0x10000);
+    mem.set_sys_segment_unified(0x0A, 0x30000); // CCP code also lives in seg 0x0A
     mem.set_segment_unified(0x0B, 0x30000);
 
     // Create separate bus adapters for instruction fetch and data/stack
@@ -591,6 +579,7 @@ int main(int argc, char* argv[])
     cpu.set_stack_memory(&d_bus);
     cpu.set_trace(trace);
     cpu.set_reg_trace(reg_trace);
+    bdos_set_trace(bdos_trace);
 
     // Wire FCW pointer so SegBus can distinguish system/normal mode for segment 0
     i_bus.set_fcw_ptr(cpu.get_fcw_ptr());
@@ -618,16 +607,6 @@ int main(int argc, char* argv[])
     g_mrt_offset = build_mrt(mem, mrt_offset);
     fprintf(stderr, "MRT at system offset 0x%04X\n", g_mrt_offset);
 
-    // Set up basepage in TPA
-    setup_basepage(mem);
-
-    // Write __exit handler at TPA offset 0x0002: SC #2 (BDOS call with func 0 = warm boot)
-    // The startup code pushes __exit address on stack as return address.
-    // __exit does: ldk r5, #0; sc #2
-    // Seg 0x08 and 0x0A instruction fetch both map to phys 0x10000, so one write suffices.
-    static const uint8_t exit_code[] = {0xBD, 0x50, 0x7F, 0x02, 0x7A, 0x00};
-    memcpy(mem.data() + PHYS_TPA + 0x0002, exit_code, sizeof(exit_code));
-
     // Initialize BDOS state (TPA limits from MRT region 1)
     bdos_init((uint32_t(SEG_TPA) << 16) | 0x0000,
               (uint32_t(SEG_TPA) << 16) | 0xFFFE);
@@ -640,6 +619,8 @@ int main(int argc, char* argv[])
 
     // Boot loop: CCP runs, warm boot restarts it
     bool cold_boot = true;
+    uint16_t saved_psap_seg = 0;
+    uint16_t saved_psap_off = 0;
     do {
         g_warm_boot = false;
 
@@ -651,11 +632,31 @@ int main(int argc, char* argv[])
         // must not be cleared on warm boot for SUBMIT to work)
         uint16_t entry = cold_boot ? g_entry_point : g_warm_entry;
         uint32_t pc = (uint32_t(SEG_SYS) << 16) | entry;
+
+        // On warm boot, preserve PSAP from the previous run.
+        // The CCP's C runtime sets PSAP to point to its own PSA vectors
+        // (sc_trap, etc.) at startup. If we reset PSAP to the initial
+        // values, SC trap dispatch would read garbage instead of the
+        // real trap handler addresses.
+        uint16_t psap_seg = cold_boot ? SEG_PSA : saved_psap_seg;
+        uint16_t psap_off = cold_boot ? PSA_OFFSET : saved_psap_off;
+
+        // Cold boot: FCW=0xC000 (segmented + system mode) — _start is
+        // assembly that sets up the stack and PSAP before bios clears
+        // FCW.SEG with `res r0, #0xf`, switching to non-segmented mode.
+        // Warm boot: FCW=0x4000 (system mode, NO segmented mode) — we
+        // jump directly to ccp() which immediately enters C code.  C code
+        // needs SP=R15 (non-segmented), not SP=R14 (segmented), because
+        // csv sets R14=R15 as frame pointer — if SP were R14, subsequent
+        // CALL/PUSH would interpret the frame-pointer value as a segment
+        // number, corrupting the stack.
+        uint16_t fcw = cold_boot ? 0xC000 : 0x4000;
+
         cpu.init_state(
-            0xC000,           // FCW: segmented + system mode
+            fcw,              // FCW: see above
             pc,               // PC: segmented address
-            SEG_PSA,          // PSAP segment
-            PSA_OFFSET,       // PSAP offset
+            psap_seg,         // PSAP segment
+            psap_off,         // PSAP offset
             SEG_SYS,          // NSP segment
             SYS_STACK_TOP     // NSP offset
         );
@@ -667,14 +668,21 @@ int main(int argc, char* argv[])
         fs.set_caller_seg(SEG_SYS);
         fs.set_dma((uint32_t(SEG_SYS) << 16) | 0x0080);
 
-        // Set up basepage for CCP
-        setup_basepage(mem);
+        // Refresh __exit handler at TPA offset 0x0002 (warm boot may have loaded
+        // a program that overwrote it; this ensures a valid fallback).
+        // Programs loaded by PGMLD include their own __exit from startup.8kn,
+        // but the fallback is needed if CCP re-dispatches without loading.
+        static const uint8_t exit_handler[] = {0xBD, 0x50, 0x7F, 0x02, 0x7A, 0x00};
+        memcpy(mem.data() + PHYS_TPA + 0x0002, exit_handler, sizeof(exit_handler));
 
         // Run until CPU halts (run(-1) only executes ~1M cycles per call)
         while (!cpu.is_halted()) {
             cpu.run(-1);
         }
 
+        // Save PSAP for next warm boot (set by CCP's C runtime during init)
+        saved_psap_seg = cpu.get_psap_seg();
+        saved_psap_off = cpu.get_psap_off();
     } while (g_warm_boot);
 
     console_restore();

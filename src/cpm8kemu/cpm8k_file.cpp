@@ -231,10 +231,11 @@ long CpmFileSystem::compute_file_offset(uint16_t fcb_addr)
 
 long CpmFileSystem::compute_random_offset(uint16_t fcb_addr)
 {
+    // CP/M-8000: r0=MSB, r1=mid, r2=LSB (big-endian, unlike CP/M-80)
     uint8_t r0 = mem_read(fcb_addr + FCB_R0);
     uint8_t r1 = mem_read(fcb_addr + FCB_R1);
     uint8_t r2 = mem_read(fcb_addr + FCB_R2);
-    long record = r0 | (r1 << 8) | ((long)r2 << 16);
+    long record = ((long)r0 << 16) | (r1 << 8) | r2;
     return record * 128;
 }
 
@@ -562,9 +563,10 @@ int CpmFileSystem::file_size(uint16_t fcb_addr)
     if (stat(path.c_str(), &st) != 0) return 0xFF;
 
     long records = (st.st_size + 127) / 128;
-    mem_write(fcb_addr + FCB_R0, records & 0xFF);
+    // CP/M-8000: r0=MSB, r1=mid, r2=LSB (big-endian)
+    mem_write(fcb_addr + FCB_R0, (records >> 16) & 0xFF);
     mem_write(fcb_addr + FCB_R1, (records >> 8) & 0xFF);
-    mem_write(fcb_addr + FCB_R2, (records >> 16) & 0xFF);
+    mem_write(fcb_addr + FCB_R2, records & 0xFF);
     return 0;
 }
 
@@ -572,9 +574,10 @@ int CpmFileSystem::file_set_random(uint16_t fcb_addr)
 {
     long offset = compute_file_offset(fcb_addr);
     long record = offset / 128;
-    mem_write(fcb_addr + FCB_R0, record & 0xFF);
+    // CP/M-8000: r0=MSB, r1=mid, r2=LSB (big-endian)
+    mem_write(fcb_addr + FCB_R0, (record >> 16) & 0xFF);
     mem_write(fcb_addr + FCB_R1, (record >> 8) & 0xFF);
-    mem_write(fcb_addr + FCB_R2, (record >> 16) & 0xFF);
+    mem_write(fcb_addr + FCB_R2, record & 0xFF);
     return 0;
 }
 

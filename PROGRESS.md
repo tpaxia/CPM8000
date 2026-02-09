@@ -1,6 +1,6 @@
 # CP/M-8000 Emulator - Progress & Issues
 
-## Status: Fully functional. CCP, built-in commands, file I/O, transient programs, P_CHAIN, and SUBMIT all work.
+## Status: Fully functional. CCP, built-in commands, file I/O, transient programs, P_CHAIN, SUBMIT, and split I/D assembler tools all work.
 
 ## What Works
 - Z8001 CPU emulator with native trap/IRET mechanism for all SC calls
@@ -22,9 +22,12 @@
 - Split I/D programs load and execute correctly (separate code/data segments)
 - P_CHAIN (BDOS func 47) chains programs via warm boot with saved command line
 - SUBMIT command works: CCP reads commands from .SUB files across warm boots
+- Random file access works correctly (asz8k reads ASZ8K.PD predef file)
 - BDOS functions 0-48, 59, 61, 63 implemented (see cpm8k_bdos.cpp)
 - FCB file handles: slot index stored in FCB AL[1], survives FCB copies
 - Pipe input works: `echo "DIR" | build/emu/cpm8k` correctly lists files
+- Host-endian independent: all memory access uses explicit byte assembly,
+  emulator runs correctly on any CPU architecture (x86, ARM, PowerPC, etc.)
 - Build pipeline: `make emu`
 
 ## Bugs Fixed
@@ -115,6 +118,49 @@ function address. On warm boot, jump directly to `ccp()` instead of the
 C runtime startup, preserving all CCP state (both `.data` and `.bss`).
 Cold boot still uses the C runtime entry for proper initialization.
 
+### 10. Warm boot hung: FCW.SEG caused SP=R14 instead of SP=R15
+On warm boot, `init_state()` set FCW=0xC000 (segmented + system mode).
+The CCP runs in non-segmented mode — on cold boot, the BIOS assembly
+clears FCW.SEG before entering C code. On warm boot we jump directly
+to `ccp()`, skipping that setup.
+
+With FCW.SEG set, the Z8000 SP macro evaluates to R14 (register pair
+RR14) instead of R15. The C compiler's `csv` function prologue sets
+R14 = R15 (frame pointer = stack pointer). After that, every CALL/PUSH
+interprets the frame pointer value in R14 as a segment number — writing
+return addresses to garbage physical addresses and corrupting execution.
+
+**Fix**: Set FCW=0x4000 (system mode, no SEG) on warm boot, matching
+what the CCP expects. Cold boot keeps FCW=0xC000 because `_start` is
+assembly that sets up the stack and PSAP before clearing FCW.SEG.
+
+### 11. Warm boot corrupted PSAP on second iteration
+`init_state()` resets PSAP to the initial values (SEG_PSA=0x02,
+PSA_OFFSET=0x0100) on every boot. The CCP's C runtime sets PSAP to
+point to its own PSA vectors (sc_trap, etc.) during cold boot startup.
+On the first warm boot, `ccp()` calls `init` which re-runs the C
+runtime, fixing PSAP. On subsequent warm boots (init flag set, init
+skipped), PSAP pointed to the wrong location and SC trap dispatch
+read garbage handler addresses.
+
+**Fix**: Save PSAP (`get_psap_seg()`/`get_psap_off()`) after each CPU
+run and restore the saved values on warm boot. Added PSAP getters to
+the Z8001 CPU device.
+
+### 12. FCB random record byte order was wrong (CP/M-80 vs CP/M-8000)
+The random record bytes R0/R1/R2 at FCB offsets 33-35 were treated as
+little-endian (R0=LSB, R2=MSB), matching the CP/M-80 convention. But
+CP/M-8000 uses big-endian ordering: R0=MSB, R2=LSB (per Programmer's
+Guide Section 4.2.1).
+
+This caused `asz8k` to fail with "PREDEF file error at line 0" when
+reading ASZ8K.PD via random access — `file_size` wrote the record count
+with R0 as LSB, then the assembler's random reads computed wrong file
+offsets.
+
+**Fix**: Reversed byte order in `compute_random_offset()`,
+`file_size()`, and `file_set_random()` to use R0=MSB, R2=LSB.
+
 ## Architecture
 
 ### SC Handling: Native Trap Mechanism
@@ -200,6 +246,23 @@ The `memsc` handler dispatches on the caller's r5 register:
 - `rr2 != 0` -> mem_cpy (copy via I/O port)
 - else -> map_adr (address mapping via I/O port)
 
+### Endianness
+
+The emulator is fully host-endian independent:
+
+- **Emulated memory** is a flat byte array. All word access uses explicit
+  byte assembly: `(data[addr] << 8) | data[addr+1]` for read,
+  `data[addr] = val >> 8; data[addr+1] = val & 0xFF` for write. No
+  host-endian `memcpy` or pointer casts on multi-byte values.
+- **Z8000 register file** uses compile-time XOR macros (`BYTE4_XOR_BE`,
+  `BYTE_XOR_BE`) selected by `__BYTE_ORDER__` to handle the union
+  overlay of byte/word/long register views on both big-endian and
+  little-endian hosts.
+- **COFF loader** uses `read_be16()`/`read_be32()` helpers that
+  assemble bytes explicitly.
+- **FCB random record** uses CP/M-8000 big-endian convention: R0=MSB,
+  R1=mid, R2=LSB (unlike CP/M-80 which is little-endian).
+
 ### Files
 
 #### z8000_emu/ (Z8001 CPU Emulator)
@@ -236,10 +299,10 @@ hardware. System-mode segment 0 maps to the system area (0x30000).
 | 0x0A | 0x10000 | 0x10000 | TPA merged I/D / data-access to split code |
 | 0x0B | 0x30000 | 0x30000 | System: CCP + BIOS data |
 
-Split I/D loading: code is written via seg 0x0A (D-space → 0x10000),
+Split I/D loading: code is written via seg 0x0A (D-space -> 0x10000),
 which is the same physical memory as seg 0x08 I-space. Data is written
-via seg 0x08 (D-space → 0x20000). Execution uses seg 0x08 (I → code,
-D → data).
+via seg 0x08 (D-space -> 0x20000). Execution uses seg 0x08 (I -> code,
+D -> data).
 
 ### Key Design Decisions
 - SC calls use Z8001 native trap/IRET mechanism for correct segment switching
@@ -249,9 +312,13 @@ D → data).
 - CCP (seg 0x0B) and user programs (seg 0x0A/0x08) both use BDOS
 - DMA address includes caller's segment for correct memory access
 - FCB access uses caller's segment via `m_caller_seg`
-- FCB file handles stored in AL[1] byte — survives FCB copies (SUBMIT)
-- Separate I/D MMU tables per segment — no dynamic bus switching needed
+- FCB file handles stored in AL[1] byte -- survives FCB copies (SUBMIT)
+- FCB random record R0/R1/R2 uses CP/M-8000 big-endian byte order
+- Separate I/D MMU tables per segment -- no dynamic bus switching needed
+- System-mode segment 0 has independent mapping from normal mode
 - Warm boot jumps to `ccp()` directly, preserving CCP BSS state
+- Warm boot uses FCW=0x4000 (non-segmented), cold boot uses 0xC000
+- PSAP preserved across warm boots (saved/restored in boot loop)
 - Cold boot uses C runtime entry point for proper BSS initialization
 - COFF symbol table parsed at load time to find warm boot entry
 - console_status() returns false for non-tty stdin to prevent BDOS
@@ -264,6 +331,9 @@ make emu          # Build everything (lib + bios-emu + emulator)
 # Interactive test:
 build/emu/cpm8k
 
+# With BDOS call trace:
+build/emu/cpm8k -b
+
 # With CPU trace:
 build/emu/cpm8k -t
 
@@ -272,10 +342,24 @@ echo "DIR" | build/emu/cpm8k 2>emu_stderr.txt
 
 # Multiple commands via pipe:
 printf "DIR\nEXIT\n" | build/emu/cpm8k 2>/dev/null
+
+# Warm boot test (run program, then DIR):
+printf "HELLO\nDIR\n" | build/emu/cpm8k 2>/dev/null
+
+# Assembler test:
+printf "C:\nASZ8K BIOSBOOT.8KN\n" | build/emu/cpm8k 2>/dev/null
+```
+
+### Debug Options
+```
+-b    BDOS call trace (function name, parameters, FCB filenames)
+-t    CPU instruction trace (disassembly of each instruction)
+-r    Register trace (register dump after each instruction)
+-m    Memory bus trace (all read/write with physical addresses)
 ```
 
 ## Known Issues / TODO
 - No Ctrl-C signal handling in interactive mode
 - BIOS disk functions are stubs (all file I/O goes through host BDOS)
-- File stale-check removed — if the same FCB address is reused for a
+- File stale-check removed -- if the same FCB address is reused for a
   different file without closing the previous one, the old slot leaks
