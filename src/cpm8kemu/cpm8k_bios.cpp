@@ -40,6 +40,9 @@ enum BiosFunc {
 // Memory region table address (set by main after loading cpm.sys)
 extern uint16_t g_mrt_offset;
 
+// Verbose startup diagnostics (defined in main.cpp)
+extern bool g_verbose;
+
 // BIOS trace flag and file
 static bool s_bios_trace = false;
 static FILE* s_trace_fp = nullptr;
@@ -162,12 +165,14 @@ uint16_t bios_init_disks(SegmentedMemory& mem, uint16_t base_offset)
         s_dph_offset[d] = dph_off;
         s_num_image_drives++;
         if (d + 1 > s_max_drive) s_max_drive = d + 1;
-        fprintf(stderr, "Drive %c: image %s\n", 'A' + d, drive_path(d).c_str());
+        if (g_verbose)
+            fprintf(stderr, "Drive %c: image %s\n", 'A' + d, drive_path(d).c_str());
     }
 
-    fprintf(stderr, "BIOS disk data at 0x%04X-0x%04X (%d image drive%s)\n",
-            base_offset, off, s_num_image_drives,
-            s_num_image_drives == 1 ? "" : "s");
+    if (g_verbose)
+        fprintf(stderr, "BIOS disk data at 0x%04X-0x%04X (%d image drive%s)\n",
+                base_offset, off, s_num_image_drives,
+                s_num_image_drives == 1 ? "" : "s");
     return off;
 }
 

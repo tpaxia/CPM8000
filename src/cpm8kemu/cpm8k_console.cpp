@@ -12,6 +12,9 @@ static bool raw_mode = false;
 static bool eof_flag = false;
 static bool stdin_is_tty = false;
 
+// Verbose startup diagnostics (defined in main.cpp)
+extern bool g_verbose;
+
 void console_restore()
 {
     if (raw_mode) {
@@ -25,7 +28,8 @@ void console_init()
     if (raw_mode) return;
     stdin_is_tty = isatty(STDIN_FILENO);
     if (!stdin_is_tty) {
-        fprintf(stderr, "console: stdin not a tty (isatty=0) -- raw mode off\n");
+        if (g_verbose)
+            fprintf(stderr, "console: stdin not a tty (isatty=0) -- raw mode off\n");
         return;
     }
 

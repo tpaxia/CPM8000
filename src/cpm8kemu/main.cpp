@@ -45,6 +45,9 @@ SegmentedMemory* g_mem = nullptr;
 CpmFileSystem* g_fs = nullptr;   // host-directory backend (BDOS file ops)
 uint16_t g_mrt_offset = 0;
 
+// Verbose startup diagnostics (off by default; enabled with -v)
+bool g_verbose = false;
+
 // Warm boot flag
 bool g_warm_boot = false;
 
@@ -238,16 +241,18 @@ static int load_coff(SegmentedMemory& mem, const char* path, uint32_t phys_base)
             uint32_t dest = phys_base + offset;
             if (dest + sec.size <= MEM_SIZE) {
                 memcpy(mem.data() + dest, buf + sec.data_offset, sec.size);
-                fprintf(stderr, "  Loaded section %.8s: offset=0x%04X size=0x%X\n",
-                        sec.name, offset, sec.size);
+                if (g_verbose)
+                    fprintf(stderr, "  Loaded section %.8s: offset=0x%04X size=0x%X\n",
+                            sec.name, offset, sec.size);
             }
         } else if (sec.size > 0 && sec.data_offset == 0) {
             // BSS section - zero fill
             uint32_t dest = phys_base + offset;
             if (dest + sec.size <= MEM_SIZE) {
                 memset(mem.data() + dest, 0, sec.size);
-                fprintf(stderr, "  BSS section %.8s: offset=0x%04X size=0x%X\n",
-                        sec.name, offset, sec.size);
+                if (g_verbose)
+                    fprintf(stderr, "  BSS section %.8s: offset=0x%04X size=0x%X\n",
+                            sec.name, offset, sec.size);
             }
         }
 
@@ -261,25 +266,17 @@ static int load_coff(SegmentedMemory& mem, const char* path, uint32_t phys_base)
     uint32_t ccp_sym = find_coff_symbol(buf, file_size, hdr, "ccp");
     if (ccp_sym) {
         g_warm_entry = ccp_sym & 0xFFFF;
-        fprintf(stderr, "  Warm boot entry: ccp at 0x%04X\n", g_warm_entry);
+        if (g_verbose)
+            fprintf(stderr, "  Warm boot entry: ccp at 0x%04X\n", g_warm_entry);
     }
 
     // Find BDOS state variables for sync between C++ file I/O and native BDOS
     uint32_t dma_sym = find_coff_symbol(buf, file_size, hdr, "_dma");
-    if (dma_sym) {
-        g_bdos_dma_offset = dma_sym & 0xFFFF;
-        fprintf(stderr, "  BDOS _dma at 0x%04X\n", g_bdos_dma_offset);
-    }
+    if (dma_sym) g_bdos_dma_offset = dma_sym & 0xFFFF;
     uint32_t curdis_sym = find_coff_symbol(buf, file_size, hdr, "_cur_dis");
-    if (curdis_sym) {
-        g_bdos_curdisk_offset = curdis_sym & 0xFFFF;
-        fprintf(stderr, "  BDOS _cur_dis at 0x%04X\n", g_bdos_curdisk_offset);
-    }
+    if (curdis_sym) g_bdos_curdisk_offset = curdis_sym & 0xFFFF;
     uint32_t gbls_sym = find_coff_symbol(buf, file_size, hdr, "_gbls");
-    if (gbls_sym) {
-        g_gbls_offset = gbls_sym & 0xFFFF;
-        fprintf(stderr, "  BDOS _gbls at 0x%04X\n", g_gbls_offset);
-    }
+    if (gbls_sym) g_gbls_offset = gbls_sym & 0xFFFF;
 
     delete[] buf;
 
@@ -289,7 +286,8 @@ static int load_coff(SegmentedMemory& mem, const char* path, uint32_t phys_base)
         g_warm_entry = g_entry_point; // Fallback if symbol not found
     g_ccp_size = highest_addr;
 
-    fprintf(stderr, "Loaded %s: entry=0x%04X, size=0x%X\n", path, g_entry_point, highest_addr);
+    if (g_verbose)
+        fprintf(stderr, "Loaded %s: entry=0x%04X, size=0x%X\n", path, g_entry_point, highest_addr);
     return g_entry_point;
 }
 
@@ -508,6 +506,7 @@ static void usage(const char* prog)
     fprintf(stderr, "  -t         Enable CPU instruction trace\n");
     fprintf(stderr, "  -r         Enable register trace\n");
     fprintf(stderr, "  -m         Enable memory bus trace\n");
+    fprintf(stderr, "  -v         Verbose startup diagnostics\n");
     fprintf(stderr, "  -h         Show this help\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Drives can be mixed, e.g.:\n");
@@ -523,12 +522,13 @@ int main(int argc, char* argv[])
     bool mem_trace = false;
 
     int opt;
-    while ((opt = getopt(argc, argv, "btrmhd:")) != -1) {
+    while ((opt = getopt(argc, argv, "btrmvhd:")) != -1) {
         switch (opt) {
         case 'b': bdos_trace = true; break;
         case 't': trace = true; break;
         case 'r': reg_trace = true; break;
         case 'm': mem_trace = true; break;
+        case 'v': g_verbose = true; break;
         case 'd':
             if (!drive_parse_spec(optarg)) { usage(argv[0]); return 1; }
             break;
@@ -632,7 +632,8 @@ int main(int argc, char* argv[])
     }, sc_trace_fp);
 
     // --- Load cpm.sys into system segment ---
-    fprintf(stderr, "Loading %s...\n", sys_file);
+    if (g_verbose)
+        fprintf(stderr, "Loading %s...\n", sys_file);
     int entry = load_coff(mem, sys_file, PHYS_SYS);
     if (entry < 0) {
         fprintf(stderr, "Failed to load %s\n", sys_file);
@@ -643,7 +644,8 @@ int main(int argc, char* argv[])
     // Place MRT after the loaded CCP code
     uint16_t mrt_offset = (g_ccp_size + 0xFF) & ~0xFF; // Align to 256
     g_mrt_offset = build_mrt(mem, mrt_offset);
-    fprintf(stderr, "MRT at system offset 0x%04X\n", g_mrt_offset);
+    if (g_verbose)
+        fprintf(stderr, "MRT at system offset 0x%04X\n", g_mrt_offset);
 
     // Build BIOS disk data structures (DPH, DPB, buffers) and open images
     // for every IMAGE-backed drive in the drive table.
