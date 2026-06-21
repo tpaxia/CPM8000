@@ -1,6 +1,8 @@
 #include "cpm8k_console.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <cerrno>
 #include <unistd.h>
 #include <termios.h>
 #include <sys/select.h>
@@ -22,9 +24,15 @@ void console_init()
 {
     if (raw_mode) return;
     stdin_is_tty = isatty(STDIN_FILENO);
-    if (!stdin_is_tty) return;
+    if (!stdin_is_tty) {
+        fprintf(stderr, "console: stdin not a tty (isatty=0) -- raw mode off\n");
+        return;
+    }
 
-    tcgetattr(STDIN_FILENO, &orig_termios);
+    if (tcgetattr(STDIN_FILENO, &orig_termios) != 0) {
+        fprintf(stderr, "console: tcgetattr failed (%s)\n", strerror(errno));
+        return;
+    }
     atexit(console_restore);
 
     struct termios raw = orig_termios;
@@ -35,7 +43,15 @@ void console_init()
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
 
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) != 0) {
+        fprintf(stderr, "console: tcsetattr failed (%s)\n", strerror(errno));
+        return;
+    }
+    // Confirm the kernel actually applied raw mode.
+    struct termios check;
+    if (tcgetattr(STDIN_FILENO, &check) == 0 && (check.c_lflag & ICANON))
+        fprintf(stderr, "console: WARNING raw mode not applied (ICANON still set)\n");
+
     raw_mode = true;
 }
 

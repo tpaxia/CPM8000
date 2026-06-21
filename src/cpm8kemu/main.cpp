@@ -1,8 +1,8 @@
 // CP/M-8000 Emulator for macOS
-// Runs CP/M-8000 CCP natively on an emulated Z8001.
-// Host provides BIOS (SC #3) and BDOS (SC #2) services via I/O port bridging.
-// SC instructions trigger the Z8001 native trap mechanism, dispatching to
-// BIOS assembly handlers which bridge to C++ via OUT instructions.
+// Runs CP/M-8000 CCP+BDOS natively on an emulated Z8001.
+// BIOS (SC #3) services bridge to C++ via I/O port OUT instructions.
+// All BDOS (SC #2) calls go to the native BDOS; disk I/O uses BIOS
+// block read/write against real Olivetti M20 disk image files.
 
 #include "z8000.h"
 #include "cpm8k_mem.h"
@@ -10,8 +10,8 @@
 #include "cpm8k_bios.h"
 #include "cpm8k_console.h"
 #include "cpm8k_file.h"
+#include "cpm8k_drives.h"
 
-#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -42,11 +42,17 @@ static constexpr uint16_t PORT_MEMCPY = 0xF6;
 
 // Global pointers for cross-module access
 SegmentedMemory* g_mem = nullptr;
+CpmFileSystem* g_fs = nullptr;   // host-directory backend (BDOS file ops)
 uint16_t g_mrt_offset = 0;
 
-// Warm boot flag (extern'd by cpm8k_bdos.cpp)
+// Warm boot flag
 bool g_warm_boot = false;
 
+// BDOS state sync: offsets within system segment (from COFF symbol table)
+// Kept for symbol table lookup diagnostics; no longer synced at runtime.
+uint16_t g_bdos_dma_offset = 0;
+uint16_t g_bdos_curdisk_offset = 0;
+uint16_t g_gbls_offset = 0;
 
 // BIOS entry point (set after loading cpm.sys)
 static uint16_t g_entry_point = 0;   // Cold boot: C runtime startup (clears BSS)
@@ -258,6 +264,23 @@ static int load_coff(SegmentedMemory& mem, const char* path, uint32_t phys_base)
         fprintf(stderr, "  Warm boot entry: ccp at 0x%04X\n", g_warm_entry);
     }
 
+    // Find BDOS state variables for sync between C++ file I/O and native BDOS
+    uint32_t dma_sym = find_coff_symbol(buf, file_size, hdr, "_dma");
+    if (dma_sym) {
+        g_bdos_dma_offset = dma_sym & 0xFFFF;
+        fprintf(stderr, "  BDOS _dma at 0x%04X\n", g_bdos_dma_offset);
+    }
+    uint32_t curdis_sym = find_coff_symbol(buf, file_size, hdr, "_cur_dis");
+    if (curdis_sym) {
+        g_bdos_curdisk_offset = curdis_sym & 0xFFFF;
+        fprintf(stderr, "  BDOS _cur_dis at 0x%04X\n", g_bdos_curdisk_offset);
+    }
+    uint32_t gbls_sym = find_coff_symbol(buf, file_size, hdr, "_gbls");
+    if (gbls_sym) {
+        g_gbls_offset = gbls_sym & 0xFFFF;
+        fprintf(stderr, "  BDOS _gbls at 0x%04X\n", g_gbls_offset);
+    }
+
     delete[] buf;
 
     // entry_point is a segmented address - extract offset
@@ -350,15 +373,16 @@ static uint16_t build_mrt(SegmentedMemory& mem, uint16_t offset)
 // The OUT executes synchronously during the trap handler, so we can
 // read/write CPU registers directly.
 
+static FILE* sc_trace_fp = nullptr;
+
 class EmuIO : public z8000_io_bus {
     z8002_device& m_cpu;
-    CpmFileSystem& m_fs;
     SegmentedMemory& m_mem;
     bool& m_warm_boot;
 
 public:
-    EmuIO(z8002_device& cpu, CpmFileSystem& fs, SegmentedMemory& mem, bool& warm_boot)
-        : m_cpu(cpu), m_fs(fs), m_mem(mem), m_warm_boot(warm_boot) {}
+    EmuIO(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot)
+        : m_cpu(cpu), m_mem(mem), m_warm_boot(warm_boot) {}
 
     uint8_t read_byte(uint16_t, int) override { return 0xFF; }
     uint16_t read_word(uint16_t, int) override { return 0xFFFF; }
@@ -374,11 +398,19 @@ public:
     }
 
 private:
-    // BDOS handler: r4=caller_seg_word, r5=func, r6=param_seg, r7=param_off
-    // scseg is a Z8001 segmented PC word: (seg|0x80)<<8 in high byte
+    // BDOS router: a HOST_DIR-targeted call is serviced here (r0=1, the
+    // assembly then skips the native BDOS); everything else defers (r0=0).
     void handle_bdos() {
+        if (sc_trace_fp) {
+            uint16_t func = m_cpu.get_reg(5);
+            uint16_t p_hi = m_cpu.get_reg(6);
+            uint16_t p_lo = m_cpu.get_reg(7);
+            fprintf(sc_trace_fp, "BDOS %2d param=%04X:%04X\n", func, p_hi, p_lo);
+            fflush(sc_trace_fp);
+        }
         uint8_t caller_seg = (m_cpu.get_reg(4) >> 8) & 0x7F;
-        bdos_handler(m_cpu, m_fs, caller_seg);
+        bool claimed = g_fs && bdos_route(m_cpu, *g_fs, caller_seg);
+        m_cpu.set_reg(0, claimed ? 1 : 0);
     }
 
     // BIOS handler: r2=caller_seg_word, r3=func, rr4=P1, rr6=P2
@@ -466,55 +498,62 @@ private:
     }
 };
 
-// Global filesystem pointer for bdos_handler
-CpmFileSystem* g_fs = nullptr;
-
 static void usage(const char* prog)
 {
-    fprintf(stderr, "Usage: %s [options] [cpm.sys]\n", prog);
+    fprintf(stderr, "Usage: %s [options] [image_a [image_b]]\n", prog);
     fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -d X=dir:PATH  Map drive X (A..P) to host directory PATH (local disk)\n");
+    fprintf(stderr, "  -d X=img:PATH  Map drive X (A..P) to disk image file PATH\n");
     fprintf(stderr, "  -b         Enable BDOS call trace\n");
     fprintf(stderr, "  -t         Enable CPU instruction trace\n");
     fprintf(stderr, "  -r         Enable register trace\n");
     fprintf(stderr, "  -m         Enable memory bus trace\n");
-    fprintf(stderr, "  -A dir     Host directory for drive A (default: drives/A)\n");
-    fprintf(stderr, "  -B dir     Host directory for drive B (default: drives/B)\n");
-    fprintf(stderr, "  -C dir     Host directory for drive C (default: drives/C)\n");
-    fprintf(stderr, "  -D dir     Host directory for drive D (default: drives/D)\n");
     fprintf(stderr, "  -h         Show this help\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Drives can be mixed, e.g.:\n");
+    fprintf(stderr, "  %s -d A=img:rel11a.img -d C=dir:drives/C\n", prog);
+    fprintf(stderr, "Positional image_a/image_b are shorthand for -d A=img: / -d B=img:.\n");
 }
 
 int main(int argc, char* argv[])
 {
-    const char* sys_file = nullptr;
     bool bdos_trace = false;
     bool trace = false;
     bool reg_trace = false;
     bool mem_trace = false;
-    std::string drive_paths[4] = {"drives/A", "drives/B", "drives/C", "drives/D"};
 
     int opt;
-    while ((opt = getopt(argc, argv, "btrmA:B:C:D:h")) != -1) {
+    while ((opt = getopt(argc, argv, "btrmhd:")) != -1) {
         switch (opt) {
         case 'b': bdos_trace = true; break;
         case 't': trace = true; break;
         case 'r': reg_trace = true; break;
         case 'm': mem_trace = true; break;
-        case 'A': drive_paths[0] = optarg; break;
-        case 'B': drive_paths[1] = optarg; break;
-        case 'C': drive_paths[2] = optarg; break;
-        case 'D': drive_paths[3] = optarg; break;
+        case 'd':
+            if (!drive_parse_spec(optarg)) { usage(argv[0]); return 1; }
+            break;
         case 'h': usage(argv[0]); return 0;
         default: usage(argv[0]); return 1;
         }
     }
 
-    if (optind < argc) {
-        sys_file = argv[optind];
+    // Positional args are shorthand for image drives A and B, applied only
+    // if those drives were not already configured with -d.
+    if (optind < argc && !drive_present(0))
+        drive_set(0, DriveBackend::IMAGE, argv[optind]);
+    if (optind + 1 < argc && !drive_present(1))
+        drive_set(1, DriveBackend::IMAGE, argv[optind + 1]);
+
+    // At least one drive must be configured.
+    if (drive_login_vector() == 0) {
+        fprintf(stderr, "Error: no drives configured (use -d or give a disk image)\n");
+        usage(argv[0]);
+        return 1;
     }
 
-    // If no cpm.sys specified, look for it in default locations
-    if (!sys_file) {
+    // Auto-detect cpm.sys in default locations
+    const char* sys_file = nullptr;
+    {
         static const char* defaults[] = {"cpm.sys", "build/bios-emu/cpm.sys", "bios/emu/cpm.sys", nullptr};
         for (const char** p = defaults; *p; p++) {
             struct stat st;
@@ -530,25 +569,16 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Validate drive directories - create if missing, error if path is invalid
-    for (int i = 0; i < 4; i++) {
-        struct stat st;
-        if (stat(drive_paths[i].c_str(), &st) != 0) {
-            if (mkdir(drive_paths[i].c_str(), 0755) != 0) {
-                fprintf(stderr, "Error: cannot create drive %c: directory '%s': %s\n",
-                        'A' + i, drive_paths[i].c_str(), strerror(errno));
-                return 1;
-            }
-        } else if (!S_ISDIR(st.st_mode)) {
-            fprintf(stderr, "Error: drive %c: path '%s' is not a directory\n",
-                    'A' + i, drive_paths[i].c_str());
-            return 1;
-        }
-    }
-
     // --- Create system components ---
     SegmentedMemory mem;
     g_mem = &mem;
+
+    // Host-directory backend (services BDOS file ops for HOST_DIR drives)
+    CpmFileSystem fs(mem);
+    g_fs = &fs;
+    for (int d = 0; d < NUM_DRIVES; d++)
+        if (drive_is_host(d))
+            fs.set_drive_path(d, drive_path(d));
 
     // Configure MMU segment table (separate I-space and D-space per segment)
     //   Seg   I-space   D-space   Purpose
@@ -580,18 +610,26 @@ int main(int argc, char* argv[])
     cpu.set_trace(trace);
     cpu.set_reg_trace(reg_trace);
     bdos_set_trace(bdos_trace);
+    bios_set_trace(bdos_trace);
 
     // Wire FCW pointer so SegBus can distinguish system/normal mode for segment 0
     i_bus.set_fcw_ptr(cpu.get_fcw_ptr());
     d_bus.set_fcw_ptr(cpu.get_fcw_ptr());
 
-    CpmFileSystem fs(mem);
-    for (int i = 0; i < 4; i++)
-        fs.set_drive_path(i, drive_paths[i]);
-    g_fs = &fs;
-
-    EmuIO io(cpu, fs, mem, g_warm_boot);
+    EmuIO io(cpu, mem, g_warm_boot);
     cpu.set_io(&io);
+
+    // Trap callback: log SC calls and allow all to proceed.
+    if (bdos_trace)
+        sc_trace_fp = fopen("sc_trace.log", "w");
+    cpu.set_trap_callback([](void* ctx, uint8_t sc_num, uint32_t caller_pc) -> bool {
+        FILE* fp = static_cast<FILE*>(ctx);
+        if (fp) {
+            fprintf(fp, "SC #%d from PC=%05X\n", sc_num, caller_pc);
+            fflush(fp);
+        }
+        return true;
+    }, sc_trace_fp);
 
     // --- Load cpm.sys into system segment ---
     fprintf(stderr, "Loading %s...\n", sys_file);
@@ -607,15 +645,13 @@ int main(int argc, char* argv[])
     g_mrt_offset = build_mrt(mem, mrt_offset);
     fprintf(stderr, "MRT at system offset 0x%04X\n", g_mrt_offset);
 
-    // Initialize BDOS state (TPA limits from MRT region 1)
-    bdos_init((uint32_t(SEG_TPA) << 16) | 0x0000,
-              (uint32_t(SEG_TPA) << 16) | 0xFFFE);
+    // Build BIOS disk data structures (DPH, DPB, buffers) and open images
+    // for every IMAGE-backed drive in the drive table.
+    uint16_t disk_data_offset = mrt_offset + 256;
+    bios_init_disks(mem, disk_data_offset);
 
     // --- Initialize and run ---
     console_init();
-
-    // Cold boot: set initial drive to A
-    fs.set_current_drive(0);
 
     // Boot loop: CCP runs, warm boot restarts it
     bool cold_boot = true;
@@ -623,37 +659,24 @@ int main(int argc, char* argv[])
     uint16_t saved_psap_off = 0;
     do {
         g_warm_boot = false;
-
         mem.set_segment_unified(0x00, 0x10000);
 
-        // Cold boot: C runtime startup (clears BSS, calls main → ccp)
+        // Cold boot: C runtime startup (clears BSS, calls main -> ccp)
         // Warm boot: jump directly to ccp() to preserve BSS state
-        // (CCP keeps submit flags in .data and subfcb in .bss — BSS
-        // must not be cleared on warm boot for SUBMIT to work)
+        // (CCP keeps submit flags in .data and subfcb in .bss)
         uint16_t entry = cold_boot ? g_entry_point : g_warm_entry;
         uint32_t pc = (uint32_t(SEG_SYS) << 16) | entry;
 
         // On warm boot, preserve PSAP from the previous run.
-        // The CCP's C runtime sets PSAP to point to its own PSA vectors
-        // (sc_trap, etc.) at startup. If we reset PSAP to the initial
-        // values, SC trap dispatch would read garbage instead of the
-        // real trap handler addresses.
         uint16_t psap_seg = cold_boot ? SEG_PSA : saved_psap_seg;
         uint16_t psap_off = cold_boot ? PSA_OFFSET : saved_psap_off;
 
-        // Cold boot: FCW=0xC000 (segmented + system mode) — _start is
-        // assembly that sets up the stack and PSAP before bios clears
-        // FCW.SEG with `res r0, #0xf`, switching to non-segmented mode.
-        // Warm boot: FCW=0x4000 (system mode, NO segmented mode) — we
-        // jump directly to ccp() which immediately enters C code.  C code
-        // needs SP=R15 (non-segmented), not SP=R14 (segmented), because
-        // csv sets R14=R15 as frame pointer — if SP were R14, subsequent
-        // CALL/PUSH would interpret the frame-pointer value as a segment
-        // number, corrupting the stack.
+        // Cold boot: FCW=0xC000 (segmented + system mode)
+        // Warm boot: FCW=0x4000 (system mode, NO segmented mode)
         uint16_t fcw = cold_boot ? 0xC000 : 0x4000;
 
         cpu.init_state(
-            fcw,              // FCW: see above
+            fcw,              // FCW
             pc,               // PC: segmented address
             psap_seg,         // PSAP segment
             psap_off,         // PSAP offset
@@ -663,28 +686,21 @@ int main(int argc, char* argv[])
 
         cold_boot = false;
 
-        // Reset DMA for CCP (runs in system segment)
-        // Current drive persists across warm boots (matching real BDOS)
-        fs.set_caller_seg(SEG_SYS);
-        fs.set_dma((uint32_t(SEG_SYS) << 16) | 0x0080);
-
-        // Refresh __exit handler at TPA offset 0x0002 (warm boot may have loaded
-        // a program that overwrote it; this ensures a valid fallback).
-        // Programs loaded by PGMLD include their own __exit from startup.8kn,
-        // but the fallback is needed if CCP re-dispatches without loading.
+        // Refresh __exit handler at TPA offset 0x0002
         static const uint8_t exit_handler[] = {0xBD, 0x50, 0x7F, 0x02, 0x7A, 0x00};
         memcpy(mem.data() + PHYS_TPA + 0x0002, exit_handler, sizeof(exit_handler));
 
-        // Run until CPU halts (run(-1) only executes ~1M cycles per call)
+        // Run until CPU halts
         while (!cpu.is_halted()) {
             cpu.run(-1);
         }
 
-        // Save PSAP for next warm boot (set by CCP's C runtime during init)
+        // Save PSAP for next warm boot
         saved_psap_seg = cpu.get_psap_seg();
         saved_psap_off = cpu.get_psap_off();
     } while (g_warm_boot);
 
+    bios_cleanup_disks();
     console_restore();
     return 0;
 }

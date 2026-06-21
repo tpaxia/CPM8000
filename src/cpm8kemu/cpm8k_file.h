@@ -10,7 +10,7 @@
 
 // Maximum open files (CP/M allows up to ~8 concurrent FCBs)
 static constexpr int MAX_OPEN_FILES = 16;
-static constexpr int MAX_DRIVES = 4;
+static constexpr int MAX_DRIVES = 16;
 
 // CP/M FCB structure offsets (36 bytes total)
 static constexpr int FCB_DR   = 0;   // Drive code (0=default, 1=A, 2=B...)
@@ -98,6 +98,8 @@ public:
     void set_drive_ro(int drive);            // Func 28
     void reset_all_drives();                 // Func 13
     void reset_drives(uint16_t mask);        // Func 37
+    void close_all_files();                  // Close all open files (cold boot)
+    void close_user_files(uint8_t sys_seg);  // Close files not in sys_seg (warm boot)
 
 private:
     SegmentedMemory& m_mem;
@@ -119,6 +121,8 @@ private:
     void filename_to_fcb(const char* host_name, uint8_t* entry);
     int find_open_slot();
     OpenFile* find_file_by_fcb(uint16_t fcb_addr);
+    OpenFile* ensure_open(uint16_t fcb_addr);
+    void close_stale(uint16_t fcb_addr);
     void close_search();
     long compute_file_offset(uint16_t fcb_addr);
     long compute_random_offset(uint16_t fcb_addr);

@@ -11,6 +11,7 @@
 	.extern	ccp
 	.extern	_bss_top, _bss_end
 	.extern	trapinit
+	.extern	_bdosini, bdossc
 
 	.equ	SYSTEM, 0x0B000000
 	.equ	SYSSTK, (SYSTEM + 0x0BFFE)
@@ -61,7 +62,14 @@ kludge:
 
 	push	@r15, #_wboot	! return address = warm boot
 
-	call	trapinit	! initialize trap system
+	call	trapinit	! initialize trap system (no bdossc yet)
+	call	_bdosini	! initialize BDOS state (_gbls, SC #2 handler)
+
+	! Override SC #2 with our smart dispatcher
+	! (after _bdosini may have installed its own handler)
+	ld	r2, _sysseg
+	lda	r3, bdossc
+	ldl	_trapvec + (BDOS_SC + SC0TRAP) * 4, rr2
 
 	jp	ccp		! start CCP
 

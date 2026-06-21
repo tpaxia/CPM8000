@@ -27,6 +27,9 @@
 
 	.equ	ARG1, PCSIZE
 	.equ	ARG2, ARG1+INTSIZE
+	.equ	ARG3, ARG2+INTSIZE
+	.equ	ARG4, ARG3+INTSIZE
+	.equ	ARG5, ARG4+INTSIZE
 
 ! Stack frame equates for trap handler
 	.equ	cr0, 0

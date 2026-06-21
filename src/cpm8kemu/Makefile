@@ -15,7 +15,7 @@ Z8K_BUILDDIR ?= ../../build/z8000_emu
 # lib/include/z8000 lets our sources use "z8000.h" directly.
 INCLUDES = -I$(Z8K_EMU)/lib/include -I$(Z8K_EMU)/lib/include/z8000
 
-SOURCES = main.cpp cpm8k_bdos.cpp cpm8k_bios.cpp cpm8k_console.cpp cpm8k_file.cpp
+SOURCES = main.cpp cpm8k_bdos.cpp cpm8k_bios.cpp cpm8k_console.cpp cpm8k_file.cpp cpm8k_drives.cpp
 OBJECTS = $(addprefix $(BUILDDIR)/,$(SOURCES:.cpp=.o))
 TARGET = $(BUILDDIR)/cpm8k
 

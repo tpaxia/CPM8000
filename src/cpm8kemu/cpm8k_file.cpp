@@ -207,8 +207,68 @@ OpenFile* CpmFileSystem::find_file_by_fcb(uint16_t fcb_addr)
 
 FILE* CpmFileSystem::get_open_fp(uint16_t fcb_addr)
 {
+    OpenFile* of = ensure_open(fcb_addr);
+    return of ? of->fp : nullptr;
+}
+
+// Close any existing file at the same FCB address+segment.
+// Prevents slot leaks when the CCP reuses its program-loading FCB
+// without calling F_CLOSE.
+void CpmFileSystem::close_stale(uint16_t fcb_addr)
+{
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        if (m_files[i].active &&
+            m_files[i].fcb_addr == fcb_addr &&
+            m_files[i].fcb_seg == m_caller_seg) {
+            if (m_files[i].fp) fclose(m_files[i].fp);
+            m_files[i].active = false;
+        }
+    }
+}
+
+// Auto-reopen a file that was closed (e.g., by warm boot or stale check).
+// Uses the FCB filename to open the host file and stores the new handle
+// in AL[1].  This makes file I/O resilient across warm boots — matching
+// real CP/M where the FCB IS the file state and there are no persistent
+// host file handles.
+OpenFile* CpmFileSystem::ensure_open(uint16_t fcb_addr)
+{
     OpenFile* of = find_file_by_fcb(fcb_addr);
-    return (of && of->active) ? of->fp : nullptr;
+    if (of) {
+        // Verify the slot still refers to the same file
+        std::string path = fcb_to_host_path(fcb_addr);
+        if (of->host_path == path)
+            return of;
+        // Slot was reused for a different file — close and reopen
+        if (of->fp) fclose(of->fp);
+        of->active = false;
+    }
+
+    // Try to (re)open from FCB filename
+    std::string path = fcb_to_host_path(fcb_addr);
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) return nullptr;
+
+    int slot = find_open_slot();
+    if (slot < 0) {
+        fprintf(stderr, "ensure_open: no free slots for %s\n", path.c_str());
+        return nullptr;
+    }
+
+    FILE* fp = fopen(path.c_str(), "r+b");
+    if (!fp) {
+        fp = fopen(path.c_str(), "rb");
+        if (!fp) return nullptr;
+    }
+
+    m_files[slot].fp = fp;
+    m_files[slot].fcb_addr = fcb_addr;
+    m_files[slot].fcb_seg = m_caller_seg;
+    m_files[slot].active = true;
+    m_files[slot].host_path = path;
+
+    mem_write(fcb_addr + FCB_AL + 1, slot + 1);
+    return &m_files[slot];
 }
 
 void CpmFileSystem::close_search()
@@ -260,6 +320,10 @@ int CpmFileSystem::file_open(uint16_t fcb_addr)
     if (stat(path.c_str(), &st) != 0) {
         return 0xFF; // File not found
     }
+
+    // Close any stale file at the same FCB address (CCP reuses its FCB
+    // for loading programs without calling F_CLOSE on the previous one)
+    close_stale(fcb_addr);
 
     int slot = find_open_slot();
     if (slot < 0) return 0xFF;
@@ -415,8 +479,8 @@ int CpmFileSystem::file_delete(uint16_t fcb_addr)
 
 int CpmFileSystem::file_read_seq(uint16_t fcb_addr)
 {
-    OpenFile* of = find_file_by_fcb(fcb_addr);
-    if (!of || !of->fp) return 0xFF;
+    OpenFile* of = ensure_open(fcb_addr);
+    if (!of) return 0xFF;
 
     long offset = compute_file_offset(fcb_addr);
     fseek(of->fp, offset, SEEK_SET);
@@ -437,8 +501,8 @@ int CpmFileSystem::file_read_seq(uint16_t fcb_addr)
 
 int CpmFileSystem::file_write_seq(uint16_t fcb_addr)
 {
-    OpenFile* of = find_file_by_fcb(fcb_addr);
-    if (!of || !of->fp) return 0xFF;
+    OpenFile* of = ensure_open(fcb_addr);
+    if (!of) return 0xFF;
 
     long offset = compute_file_offset(fcb_addr);
     fseek(of->fp, offset, SEEK_SET);
@@ -459,6 +523,9 @@ int CpmFileSystem::file_write_seq(uint16_t fcb_addr)
 int CpmFileSystem::file_make(uint16_t fcb_addr)
 {
     std::string path = fcb_to_host_path(fcb_addr);
+
+    // Close any stale file at the same FCB address
+    close_stale(fcb_addr);
 
     int slot = find_open_slot();
     if (slot < 0) return 0xFF;
@@ -519,8 +586,8 @@ int CpmFileSystem::file_rename(uint16_t fcb_addr)
 
 int CpmFileSystem::file_read_rand(uint16_t fcb_addr)
 {
-    OpenFile* of = find_file_by_fcb(fcb_addr);
-    if (!of || !of->fp) return 0xFF;
+    OpenFile* of = ensure_open(fcb_addr);
+    if (!of) return 0xFF;
 
     long offset = compute_random_offset(fcb_addr);
     fseek(of->fp, offset, SEEK_SET);
@@ -540,8 +607,8 @@ int CpmFileSystem::file_read_rand(uint16_t fcb_addr)
 
 int CpmFileSystem::file_write_rand(uint16_t fcb_addr)
 {
-    OpenFile* of = find_file_by_fcb(fcb_addr);
-    if (!of || !of->fp) return 0xFF;
+    OpenFile* of = ensure_open(fcb_addr);
+    if (!of) return 0xFF;
 
     long offset = compute_random_offset(fcb_addr);
     fseek(of->fp, offset, SEEK_SET);
@@ -584,8 +651,8 @@ int CpmFileSystem::file_set_random(uint16_t fcb_addr)
 int CpmFileSystem::file_write_rand_zf(uint16_t fcb_addr)
 {
     // Same as random write but zero-fills gaps
-    OpenFile* of = find_file_by_fcb(fcb_addr);
-    if (!of || !of->fp) return 0xFF;
+    OpenFile* of = ensure_open(fcb_addr);
+    if (!of) return 0xFF;
 
     long offset = compute_random_offset(fcb_addr);
 
@@ -644,4 +711,23 @@ void CpmFileSystem::reset_all_drives()
 void CpmFileSystem::reset_drives(uint16_t /*mask*/)
 {
     // Nothing to reset for host directories
+}
+
+void CpmFileSystem::close_all_files()
+{
+    close_user_files(0xFF); // close all segments
+}
+
+void CpmFileSystem::close_user_files(uint8_t sys_seg)
+{
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        if (m_files[i].active && m_files[i].fcb_seg != sys_seg) {
+            if (m_files[i].fp) {
+                fclose(m_files[i].fp);
+                m_files[i].fp = nullptr;
+            }
+            m_files[i].active = false;
+        }
+    }
+    close_search();
 }

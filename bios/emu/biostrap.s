@@ -7,6 +7,7 @@
 	.include "biosdef.s"
 
 	.extern	_sysseg, _psap
+	.extern	__bdos
 
 	.global	trapinit, _trap, _trap_ret, psa
 	.global	xfersc, memsc, bdossc, biossc
@@ -79,13 +80,40 @@ nmi_trap:
 ! Frame is at r15+4. Caller's r5/r6/r7 still in CPU registers.
 ! r5 = BDOS function number
 ! rr6 = parameter (r6=seg, r7=off)
+!
+! The C++ BDOS router (PORT_BDOS) decides per-call which backend serves
+! the request:
+!   r0 = 1  -> handled in C++ (HOST_DIR drive); result already in rr6.
+!   r0 = 0  -> defer to the native BDOS (IMAGE drives + console/system).
+! Native disk I/O then goes through BIOS block I/O (SC #3) to disk images.
 bdossc:
 	NONSEG
 	ld	r4, scseg+4(r15)	! caller's PC segment from frame
-	out	#PORT_BDOS, r0		! trigger C++ BDOS handler (reads r4-r7)
-	! C++ handler sets r6/r7 with return values
-	ld	cr6+4(r15), r6		! store return r6 to frame
-	ld	cr7+4(r15), r7		! store return r7 to frame
+	! Adjust segment for non-seg callers (matches M20 biossc pattern)
+	ld	r0, scfcw+4(r15)
+	and	r0, #0xC000
+	jr	nz, 1f
+	ld	r6, r4			! non-seg: add caller seg to param
+1:
+	out	#PORT_BDOS, r0		! C++ router: sets r0 = handled flag (and rr6 if handled)
+	test	r0
+	jr	z, bdos_native		! r0==0 -> native BDOS
+	! Handled by C++ (HOST_DIR drive): result is in rr6 (r6:r7)
+	ld	cr6+4(r15), r6
+	ld	cr7+4(r15), r7
+	SEG
+	ret
+
+bdos_native:
+	! Call real BDOS internal dispatcher: long __bdos(int func, long param)
+	! Uses __bdos (internal C dispatcher with switch table) instead of _bdos
+	! (SC #2 thunk) to avoid infinite recursion through our smart bdossc.
+	pushl	@r15, rr6		! push param (long)
+	push	@r15, r5		! push func
+	call	__bdos
+	add	r15, #6			! clean stack
+	ld	cr6+4(r15), r6		! store return rr6
+	ld	cr7+4(r15), r7
 	SEG
 	ret
 
@@ -151,7 +179,53 @@ xfersc:
 	ldl	rr4, rr14		! rr4 = frame pointer (system stack)
 	ld	r2, #FRAMESZ / 2	! word count
 	ldir	@r4, @r6, r2		! block copy context to frame
-	jr	_trap_ret
+	jp	_trap_ret
+
+!----------------------------------------------------------------------
+! System call thunks for C code (BDOS/CCP) to invoke BIOS services.
+! These override the versions in libcpm.a to ensure correct calling
+! convention: _bios(int code, long p1, long p2).
+
+	.global	_bios, _bdos, _xfer, _mem_cpy, _map_adr
+
+! long _bios(int code, long p1, long p2)
+_bios:
+	ld	r3, ARG1(r15)		! code (int)
+	ldl	rr4, ARG2(r15)		! p1 (long)
+	ldl	rr6, ARG4(r15)		! p2 (long)
+	sc	#BIOS_SC
+	ret
+
+! long _bdos(int code, long param)
+_bdos:
+	ld	r5, ARG1(r15)		! code (int)
+	ldl	rr6, ARG2(r15)		! param (long)
+	sc	#BDOS_SC
+	ret
+
+! _xfer(long context) - context switch, never returns
+_xfer:
+	ldl	rr6, ARG1(r15)		! context address (long)
+	ldl	rr4, #-2		! r4=0xFFFF, r5=0xFFFE (xfer magic)
+	subl	rr2, rr2
+	sc	#XFER_SC
+	ret
+
+! _mem_cpy(long source, long dest, long length)
+_mem_cpy:
+	ldl	rr6, ARG1(r15)		! source (long)
+	ldl	rr4, ARG3(r15)		! dest (long)
+	ldl	rr2, ARG5(r15)		! length (long)
+	sc	#MEM_SC
+	ret
+
+! long _map_adr(long addr, int space)
+_map_adr:
+	ldl	rr6, ARG1(r15)		! addr (long)
+	ld	r5, ARG3(r15)		! space (int)
+	subl	rr2, rr2		! 0 length = map_adr mode
+	sc	#MEM_SC
+	ret
 
 ! FPE handler stub
 	.global fp_epu
@@ -176,10 +250,8 @@ clrtraps:
 	inc	r2, #4
 	djnz	r0, clrtraps
 
-	! Set up trap vectors
+	! Set up trap vectors (bdossc installed by biosboot after _bdosini)
 	ld	r2, _sysseg
-	lda	r3, bdossc
-	ldl	_trapvec + (BDOS_SC + SC0TRAP) * 4, rr2
 	lda	r3, biossc
 	ldl	_trapvec + (BIOS_SC + SC0TRAP) * 4, rr2
 	lda	r3, memsc
