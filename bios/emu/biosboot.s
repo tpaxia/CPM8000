@@ -11,7 +11,7 @@
 	.extern	ccp
 	.extern	_bss_top, _bss_end
 	.extern	trapinit
-	.extern	_bdosini, bdossc
+	.extern	bdossc
 
 	.equ	SYSTEM, 0x0B000000
 	.equ	SYSSTK, (SYSTEM + 0x0BFFE)
@@ -63,10 +63,17 @@ kludge:
 	push	@r15, #_wboot	! return address = warm boot
 
 	call	trapinit	! initialize trap system (no bdossc yet)
-	call	_bdosini	! initialize BDOS state (_gbls, SC #2 handler)
 
-	! Override SC #2 with our smart dispatcher
-	! (after _bdosini may have installed its own handler)
+	! Install our smart SC #2 dispatcher into the trap vector.
+	!
+	! Note we do NOT call _bdosini here. This mirrors the real M20 cold boot
+	! (src/cpm8k/biosif.8kn), which calls _trapinit + _biosinit and then
+	! "jp ccp" -- it never calls _bdosini directly. The CCP cold path calls
+	! _bdosini exactly once itself (guarded by its own cold/warm flag), which
+	! is what prints the sign-on banner. Calling _bdosini here too made the
+	! banner (and the whole BDOS init) run twice. The emulator has no M20 C
+	! BIOS, so there is no _biosinit to call; the BIOS is initialised on the
+	! host side (bios_init_disks) before the CPU starts.
 	ld	r2, _sysseg
 	lda	r3, bdossc
 	ldl	_trapvec + (BDOS_SC + SC0TRAP) * 4, rr2
