@@ -23,11 +23,11 @@
 205h 308h 0 0 0a700h 0
 209h 308h 0 0 2700h 0
 90ah 308h 0 0 6700h 0
-505h 305h 0 0 2700h 10h bit BIT
+505h 305h 0 0 2700h 100h bit BIT
 204h 1108h 0 0 0a600h 0
 209h 1108h 0 0 2600h 0
 90ah 1108h 0 0 6600h 0
-504h 1105h 0 0 2600h 10h bitb BITB
+504h 1105h 0 0 2600h 100h bitb BITB
 209h 0 0 0 1f00h 0
 90ah 0 0 0 5f00h 0 call CALL
 1a03h 0 0 0 0d000h 0 calr CALR
@@ -63,22 +63,22 @@
 306h 1e08h 0 0 1000h 0
 306h 209h 0 0 1000h 0
 306h 90ah 0 0 5000h 0 cpl CPL
-605h 209h 505h 70dh 0bb08h 10h cpd CPD
-604h 209h 505h 70dh 0ba08h 10h cpdb CPDB
-605h 209h 505h 70dh 0bb0ch 10h cpdr CPDR
-604h 209h 505h 70dh 0ba0ch 10h cpdrb CPDRB
-605h 209h 505h 70dh 0bb00h 10h cpi CPI
-604h 209h 505h 70dh 0ba00h 10h cpib CPIB
-605h 209h 505h 70dh 0bb04h 10h cpir CPIR
-604h 209h 505h 70dh 0ba04h 10h cpirb CPIRB
-609h 209h 505h 70dh 0bb0ah 10h cpsd CPSD
-609h 209h 505h 70dh 0ba0ah 10h cpsdb CPSDB
-609h 209h 505h 70dh 0bb0eh 10h cpsdr CPSDR
-609h 209h 505h 70dh 0ba0eh 10h cpsdrb CPSDRB
-609h 209h 505h 70dh 0bb02h 10h cpsi CPSI
-609h 209h 505h 70dh 0ba02h 10h cpsib CPSIB
-609h 209h 505h 70dh 0bb06h 10h cpsir CPSIR
-609h 209h 505h 70dh 0ba06h 10h cpsirb CPSIRB
+605h 209h 505h 70dh 0bb08h 100h cpd CPD
+604h 209h 505h 70dh 0ba08h 100h cpdb CPDB
+605h 209h 505h 70dh 0bb0ch 100h cpdr CPDR
+604h 209h 505h 70dh 0ba0ch 100h cpdrb CPDRB
+605h 209h 505h 70dh 0bb00h 100h cpi CPI
+604h 209h 505h 70dh 0ba00h 100h cpib CPIB
+605h 209h 505h 70dh 0bb04h 100h cpir CPIR
+604h 209h 505h 70dh 0ba04h 100h cpirb CPIRB
+609h 209h 505h 70dh 0bb0ah 100h cpsd CPSD
+609h 209h 505h 70dh 0ba0ah 100h cpsdb CPSDB
+609h 209h 505h 70dh 0bb0eh 100h cpsdr CPSDR
+609h 209h 505h 70dh 0ba0eh 100h cpsdrb CPSDRB
+609h 209h 505h 70dh 0bb02h 100h cpsi CPSI
+609h 209h 505h 70dh 0ba02h 100h cpsib CPSIB
+609h 209h 505h 70dh 0bb06h 100h cpsir CPSIR
+609h 209h 505h 70dh 0ba06h 100h cpsirb CPSIRB
 204h 0 0 0 0b000h 0 dab DAB
 205h 0 0 0 0ab00h 0
 209h 0 0 0 2b00h 0
@@ -115,6 +115,232 @@
 206h 0 0 0 0b10ah 0 exts EXTS
 205h 0 0 0 0b100h 0 extsb EXTSB
 207h 0 0 0 0b107h 0 extsl EXTSL
+214h 514h 0 0 8e04h 8580h
+214h 505h 0 0 8f08h 8584h
+514h 209h 0 0 0f04h 8584h
+514h 90ah 0 0 4f04h 8584h fabs FABS
+214h 505h 0 0 8f08h 8581h
+514h 209h 0 0 0f04h 8581h
+514h 90ah 0 0 4f04h 8581h fabss FABSS
+214h 505h 0 0 8f08h 8583h
+514h 209h 0 0 0f04h 8583h
+514h 90ah 0 0 4f04h 8583h fabsd FABSD
+214h 514h 0 0 8e04h 4580h
+214h 505h 0 0 8f08h 4584h
+514h 209h 0 0 0f04h 4584h
+514h 90ah 0 0 4f04h 4584h fadd FADD
+214h 505h 0 0 8f08h 4581h
+514h 209h 0 0 0f04h 4581h
+514h 90ah 0 0 4f04h 4581h fadds FADDS
+214h 505h 0 0 8f08h 4583h
+514h 209h 0 0 0f04h 4583h
+514h 90ah 0 0 4f04h 4583h faddd FADDD
+214h 0 0 0 8e04h 100h fclr FCLR
+214h 514h 0 0 8e04h 4110h
+214h 505h 0 0 8f08h 4114h
+514h 209h 0 0 0f04h 4114h
+514h 90ah 0 0 4f04h 4114h fcp FCP
+214h 505h 0 0 8f08h 4111h
+514h 209h 0 0 0f04h 4111h
+514h 90ah 0 0 4f04h 4111h fcps FCPS
+214h 505h 0 0 8f08h 4113h
+514h 209h 0 0 0f04h 4113h
+514h 90ah 0 0 4f04h 4113h fcpd FCPD
+214h 514h 0 0 8e04h 4120h
+214h 505h 0 0 8f08h 4124h
+514h 209h 0 0 0f04h 4124h
+514h 90ah 0 0 4f04h 4124h fcpx FCPX
+214h 505h 0 0 8f08h 4121h
+514h 209h 0 0 0f04h 4121h
+514h 90ah 0 0 4f04h 4121h fcpxs FCPXS
+214h 505h 0 0 8f08h 4123h
+514h 209h 0 0 0f04h 4123h
+514h 90ah 0 0 4f04h 4123h fcpxd FCPXD
+214h 514h 0 0 8e00h 4110h fcpf FCPF
+214h 514h 0 0 8e00h 4120h fcpfx FCPFX
+214h 0 0 0 8e00h 110h fcpz FCPZ
+214h 0 0 0 8e00h 120h fcpzx FCPZX
+214h 514h 0 0 8e04h 45a0h
+214h 505h 0 0 8f08h 45a4h
+514h 209h 0 0 0f04h 45a4h
+514h 90ah 0 0 4f04h 45a4h fdiv FDIV
+214h 505h 0 0 8f08h 45a1h
+514h 209h 0 0 0f04h 45a1h
+514h 90ah 0 0 4f04h 45a1h fdivs FDIVS
+214h 505h 0 0 8f08h 45a3h
+514h 209h 0 0 0f04h 45a3h
+514h 90ah 0 0 4f04h 45a3h fdivd FDIVD
+214h 514h 0 0 8e04h 85d0h
+214h 505h 0 0 8f08h 85d4h
+514h 209h 0 0 0f04h 85d4h
+514h 90ah 0 0 4f04h 85d4h fint FINT
+214h 505h 0 0 8f08h 85d1h
+514h 209h 0 0 0f04h 85d1h
+514h 90ah 0 0 4f04h 85d1h fints FINTS
+214h 505h 0 0 8f08h 85d3h
+514h 209h 0 0 0f04h 85d3h
+514h 90ah 0 0 4f04h 85d3h fintd FINTD
+214h 514h 0 0 8e04h 8500h
+214h 505h 0 0 8f08h 8504h
+514h 209h 0 0 0f04h 8504h
+514h 90ah 0 0 4f04h 8504h
+505h 214h 0 0 8f00h 8104h
+209h 514h 0 0 0f0ch 8104h
+90ah 514h 0 0 4f0ch 8104h fld FLD
+214h 505h 0 0 8f08h 8501h
+514h 209h 0 0 0f04h 8501h
+514h 90ah 0 0 4f04h 8501h
+505h 214h 0 0 8f00h 8101h
+209h 514h 0 0 0f0ch 8101h
+90ah 514h 0 0 4f0ch 8101h flds FLDS
+214h 505h 0 0 8f08h 8503h
+514h 209h 0 0 0f04h 8503h
+514h 90ah 0 0 4f04h 8503h
+505h 214h 0 0 8f00h 8103h
+209h 514h 0 0 0f0ch 8103h
+90ah 514h 0 0 4f0ch 8103h fldd FLDD
+214h 505h 1608h 0 8f08h 8510h
+214h 505h 0 0 8f08h 8514h
+514h 209h 1608h 0 0f04h 8510h
+514h 209h 0 0 0f04h 8514h
+514h 90ah 1608h 0 4f04h 8510h
+514h 90ah 0 0 4f04h 8514h
+505h 214h 1608h 0 8f00h 8110h
+505h 214h 0 0 8f00h 8114h
+209h 514h 1608h 0 0f0ch 8110h
+209h 514h 0 0 0f0ch 8114h
+90ah 514h 1608h 0 4f0ch 8110h
+90ah 514h 0 0 4f0ch 8114h fldbcd FLDBCD
+21ah 505h 0 0 8f08h 0c100h
+215h 506h 0 0 8f08h 0c101h
+216h 505h 0 0 8f08h 0c104h
+51ah 209h 0 0 0f04h 0c100h
+515h 209h 0 0 0f04h 0c101h
+516h 209h 0 0 0f04h 0c104h
+51ah 90ah 0 0 4f04h 0c100h
+515h 90ah 0 0 4f04h 0c101h
+516h 90ah 0 0 4f04h 0c104h
+505h 21ah 0 0 8f00h 0c100h
+506h 215h 0 0 8f00h 0c101h
+505h 216h 0 0 8f00h 0c104h
+209h 51ah 0 0 0f0ch 0c100h
+209h 515h 0 0 0f0ch 0c101h
+209h 516h 0 0 0f0ch 0c104h
+90ah 51ah 0 0 4f0ch 0c100h
+90ah 515h 0 0 4f0ch 0c101h
+90ah 516h 0 0 4f0ch 0c104h fldctl FLDCTL
+217h 0 0 0 8e00h 0c110h fldctlb FLDCTLB
+214h 506h 0 0 8f08h 8521h
+514h 209h 0 0 0f04h 8521h
+514h 90ah 0 0 4f04h 8521h
+506h 214h 0 0 8f00h 8121h
+209h 514h 0 0 0f0ch 8121h
+90ah 514h 0 0 4f0ch 8121h fldil FLDIL
+214h 507h 0 0 8f08h 8523h
+514h 209h 0 0 0f04h 8523h
+514h 90ah 0 0 4f04h 8523h
+507h 214h 0 0 8f00h 8123h
+209h 514h 0 0 0f0ch 8123h
+90ah 514h 0 0 4f0ch 8123h fldiq FLDIQ
+214h 514h 0 0 8e04h 8130h
+214h 505h 0 0 8f08h 8134h
+514h 209h 0 0 0f04h 8134h
+514h 90ah 0 0 4f04h 8134h
+505h 214h 0 0 8f00h 8134h
+209h 514h 0 0 0f0ch 8134h
+90ah 514h 0 0 4f0ch 8134h fldm FLDM fldnf FLDNF
+506h 214h 0 0 8f00h 8141h
+209h 514h 0 0 0f0ch 8141h
+90ah 514h 0 0 4f0ch 8141h fldtl FLDTL
+507h 214h 0 0 8f00h 8143h
+209h 514h 0 0 0f0ch 8143h
+90ah 514h 0 0 4f0ch 8143h fldtq FLDTQ
+214h 514h 0 0 8e04h 45b0h
+214h 505h 0 0 8f08h 45b4h
+514h 209h 0 0 0f04h 45b4h
+514h 90ah 0 0 4f04h 45b4h fmul FMUL
+214h 505h 0 0 8f08h 45b1h
+514h 209h 0 0 0f04h 45b1h
+514h 90ah 0 0 4f04h 45b1h fmuls FMULS
+214h 505h 0 0 8f08h 45b3h
+514h 209h 0 0 0f04h 45b3h
+514h 90ah 0 0 4f04h 45b3h fmuld FMULD
+214h 514h 0 0 8e04h 8590h
+214h 505h 0 0 8f08h 8594h
+514h 209h 0 0 0f04h 8594h
+514h 90ah 0 0 4f04h 8594h fneg FNEG
+214h 505h 0 0 8f08h 8591h
+514h 209h 0 0 0f04h 8591h
+514h 90ah 0 0 4f04h 8591h fnegs FNEGS
+214h 505h 0 0 8f08h 8593h
+514h 209h 0 0 0f04h 8593h
+514h 90ah 0 0 4f04h 8593h fnegd FNEGD
+214h 514h 0 0 8e04h 85b0h
+214h 505h 0 0 8f08h 85b4h
+514h 209h 0 0 0f04h 85b4h
+514h 90ah 0 0 4f04h 85b4h fpwr2 FPWR2
+214h 505h 0 0 8f08h 85b1h
+514h 209h 0 0 0f04h 85b1h
+514h 90ah 0 0 4f04h 85b1h fpwr2s FPWR2S
+214h 505h 0 0 8f08h 85b3h
+514h 209h 0 0 0f04h 85b3h
+514h 90ah 0 0 4f04h 85b3h fpwr2d FPWR2D
+214h 514h 0 0 8e00h 45c0h fremstep FREMSTEP
+214h 514h 0 0 8e04h 45c0h
+214h 505h 0 0 8f08h 45c4h
+514h 209h 0 0 0f04h 45c4h
+514h 90ah 0 0 4f04h 45c4h fremsnf FREMSNF
+214h 505h 0 0 8f08h 45c1h
+514h 209h 0 0 0f04h 45c1h
+514h 90ah 0 0 4f04h 45c1h fremsnfs FREMSNFS
+214h 505h 0 0 8f08h 45c3h
+514h 209h 0 0 0f04h 45c3h
+514h 90ah 0 0 4f04h 45c3h fremsnfd FREMSNFD
+1018h 0 0 0 8e04h 0c120h fresflg FRESFLG
+1018h 0 0 0 8e24h 0c120h frestrap FRESTRAP
+214h 514h 0 0 8e04h 5a0h
+214h 505h 0 0 8f08h 5a4h
+514h 209h 0 0 0f04h 5a4h
+514h 90ah 0 0 4f04h 5a4h frvdiv FRVDIV
+214h 505h 0 0 8f08h 5a1h
+514h 209h 0 0 0f04h 5a1h
+514h 90ah 0 0 4f04h 5a1h frvdivs FRVDIVS
+214h 505h 0 0 8f08h 5a3h
+514h 209h 0 0 0f04h 5a3h
+514h 90ah 0 0 4f04h 5a3h frvdivd FRVDIVD
+214h 514h 0 0 8e04h 590h
+214h 505h 0 0 8f08h 594h
+514h 209h 0 0 0f04h 594h
+514h 90ah 0 0 4f04h 594h frvsub FRVSUB
+214h 505h 0 0 8f08h 591h
+514h 209h 0 0 0f04h 591h
+514h 90ah 0 0 4f04h 591h frvsubs FRVSUBS
+214h 505h 0 0 8f08h 593h
+514h 209h 0 0 0f04h 593h
+514h 90ah 0 0 4f04h 593h frvsubd FRVSUBD
+1018h 0 0 0 8e04h 0c130h fsetflg FSETFLG
+1019h 0 0 0 8e04h 0c140h fsetmode FSETMODE
+1018h 0 0 0 8e24h 0c130h fsettrap FSETTRAP
+214h 514h 0 0 8e04h 85c0h
+214h 505h 0 0 8f08h 85c4h
+514h 209h 0 0 0f04h 85c4h
+514h 90ah 0 0 4f04h 85c4h fsqr FSQR
+214h 505h 0 0 8f08h 85c1h
+514h 209h 0 0 0f04h 85c1h
+514h 90ah 0 0 4f04h 85c1h fsqrs FSQRS
+214h 505h 0 0 8f08h 85c3h
+514h 209h 0 0 0f04h 85c3h
+514h 90ah 0 0 4f04h 85c3h fsqrd FSQRD
+214h 514h 0 0 8e04h 4590h
+214h 505h 0 0 8f08h 4594h
+514h 209h 0 0 0f04h 4594h
+514h 90ah 0 0 4f04h 4594h fsub FSUB
+214h 505h 0 0 8f08h 4591h
+514h 209h 0 0 0f04h 4591h
+514h 90ah 0 0 4f04h 4591h fsubs FSUBS
+214h 505h 0 0 8f08h 4593h
+514h 209h 0 0 0f04h 4593h
+514h 90ah 0 0 4f04h 4593h fsubd FSUBD
 0 0 0 0 7a00h 0 halt HALT
 305h 212h 0 0 3d00h 0
 205h 1d03h 0 0 3b04h 0 in IN
@@ -132,14 +358,14 @@
 204h 1308h 0 0 0a800h 0
 209h 1308h 0 0 2800h 0
 90ah 1308h 0 0 6800h 0 incb INCB
-609h 212h 505h 0 3b08h 18h ind IND
-609h 212h 505h 0 3a08h 18h indb INDB
-609h 212h 505h 0 3b08h 10h indr INDR
-609h 212h 505h 0 3a08h 10h indrb INDRB
-609h 212h 505h 0 3b00h 18h ini INI
-609h 212h 505h 0 3a00h 18h inib INIB
-609h 212h 505h 0 3b00h 10h inir INIR
-609h 212h 505h 0 3a00h 10h inirb INIRB
+609h 212h 505h 0 3b08h 108h ind IND
+609h 212h 505h 0 3a08h 108h indb INDB
+609h 212h 505h 0 3b08h 100h indr INDR
+609h 212h 505h 0 3a08h 100h indrb INDRB
+609h 212h 505h 0 3b00h 108h ini INI
+609h 212h 505h 0 3a00h 108h inib INIB
+609h 212h 505h 0 3b00h 100h inir INIR
+609h 212h 505h 0 3a00h 100h inirb INIRB
 0 0 0 0 7b00h 0 iret IRET
 209h 0 0 0 1e08h 0
 90ah 0 0 0 5e08h 0
@@ -152,56 +378,56 @@
 305h 209h 0 0 2100h 0
 305h 90ah 0 0 6100h 0
 305h 0b0bh 0 0 3100h 0
-305h 0d0ch 0 0 7100h 10h
+305h 0d0ch 0 0 7100h 100h
 209h 305h 0 0 2f00h 0
 90ah 305h 0 0 6f00h 0
 209h 1d08h 0 0 0d05h 0
 90ah 1d08h 0 0 4d05h 0
 0b0bh 305h 0 0 3300h 0
-0d0ch 305h 0 0 7300h 10h ld LD
+0d0ch 305h 0 0 7300h 100h ld LD
 304h 204h 0 0 0a000h 0
 104h 808h 0 0 0c000h 0
 304h 209h 0 0 2000h 0
 304h 90ah 0 0 6000h 0
 304h 0b0bh 0 0 3000h 0
-304h 0d0ch 0 0 7000h 10h
+304h 0d0ch 0 0 7000h 100h
 209h 304h 0 0 2e00h 0
 90ah 304h 0 0 6e00h 0
 209h 1c08h 0 0 0c05h 0
 90ah 1c08h 0 0 4c05h 0
 0b0bh 304h 0 0 3200h 0
-0d0ch 304h 0 0 7200h 10h ldb LDB
+0d0ch 304h 0 0 7200h 100h ldb LDB
 306h 206h 0 0 9400h 0
 306h 1e08h 0 0 1400h 0
 306h 209h 0 0 1400h 0
 306h 90ah 0 0 5400h 0
 306h 0b0bh 0 0 3500h 0
-306h 0d0ch 0 0 7500h 10h
+306h 0d0ch 0 0 7500h 100h
 209h 306h 0 0 1d00h 0
 90ah 306h 0 0 5d00h 0
 0b0bh 306h 0 0 3700h 0
-0d0ch 306h 0 0 7700h 10h ldl LDL
+0d0ch 306h 0 0 7700h 100h ldl LDL
 313h 90ah 0 0 7600h 0
 313h 0b0bh 0 0 3400h 0
-313h 0d0ch 0 0 7400h 10h lda LDA
+313h 0d0ch 0 0 7400h 100h lda LDA
 313h 1b03h 0 0 3400h 0 ldar LDAR
 11h 204h 0 0 8c09h 0
 204h 11h 0 0 8c01h 0 ldctlb LDCTLB
 310h 205h 0 0 7d08h 0
 205h 310h 0 0 7d00h 0 ldctl LDCTL
-609h 209h 505h 0 0bb09h 18h ldd LDD
-609h 209h 505h 0 0ba09h 18h lddb LDDB
-609h 209h 505h 0 0bb09h 10h lddr LDDR
-609h 209h 505h 0 0ba09h 10h lddrb LDDRB
-609h 209h 505h 0 0bb01h 18h ldi LDI
-609h 209h 505h 0 0ba01h 18h ldib LDIB
-609h 209h 505h 0 0bb01h 10h ldir LDIR
-609h 209h 505h 0 0ba01h 10h ldirb LDIRB
+609h 209h 505h 0 0bb09h 108h ldd LDD
+609h 209h 505h 0 0ba09h 108h lddb LDDB
+609h 209h 505h 0 0bb09h 100h lddr LDDR
+609h 209h 505h 0 0ba09h 100h lddrb LDDRB
+609h 209h 505h 0 0bb01h 108h ldi LDI
+609h 209h 505h 0 0ba01h 108h ldib LDIB
+609h 209h 505h 0 0bb01h 100h ldir LDIR
+609h 209h 505h 0 0ba01h 100h ldirb LDIRB
 205h 308h 0 0 0bd00h 0 ldk LDK
-505h 209h 1708h 0 1c01h 10h
-505h 90ah 1708h 0 5c01h 10h
-209h 505h 1708h 0 1c09h 10h
-90ah 505h 1708h 0 5c09h 10h ldm LDM
+505h 209h 1708h 0 1c01h 100h
+505h 90ah 1708h 0 5c01h 100h
+209h 505h 1708h 0 1c09h 100h
+90ah 505h 1708h 0 5c09h 100h ldm LDM
 209h 0 0 0 3900h 0
 90ah 0 0 0 7900h 0 ldps LDPS
 305h 1b03h 0 0 3100h 0
@@ -237,18 +463,18 @@
 304h 1c08h 0 0 400h 0
 304h 209h 0 0 400h 0
 304h 90ah 0 0 4400h 0 orb ORB
-612h 209h 505h 0 3b0ah 10h otdr OTDR
-612h 209h 505h 0 3a0ah 10h otdrb OTDRB
-612h 209h 505h 0 3b02h 10h otir OTIR
-612h 209h 505h 0 3a02h 10h otirb OTIRB
+612h 209h 505h 0 3b0ah 100h otdr OTDR
+612h 209h 505h 0 3a0ah 100h otdrb OTDRB
+612h 209h 505h 0 3b02h 100h otir OTIR
+612h 209h 505h 0 3a02h 100h otirb OTIRB
 212h 305h 0 0 3f00h 0
 1d03h 205h 0 0 3b06h 0 out OUT
 212h 304h 0 0 3e00h 0
 1d03h 204h 0 0 3a06h 0 outb OUTB
-612h 209h 505h 0 3b0ah 18h outd OUTD
-612h 209h 505h 0 3a0ah 18h outdb OUTDB
-612h 209h 505h 0 3b02h 18h outi OUTI
-612h 209h 505h 0 3a02h 18h outib OUTIB
+612h 209h 505h 0 3b0ah 108h outd OUTD
+612h 209h 505h 0 3a0ah 108h outdb OUTDB
+612h 209h 505h 0 3b02h 108h outi OUTI
+612h 209h 505h 0 3a02h 108h outib OUTIB
 305h 209h 0 0 9700h 0
 309h 209h 0 0 1700h 0
 0a0ah 209h 0 0 5700h 0 pop POP
@@ -265,11 +491,11 @@
 205h 308h 0 0 0a300h 0
 209h 308h 0 0 2300h 0
 90ah 308h 0 0 6300h 0
-505h 305h 0 0 2300h 10h res RES
+505h 305h 0 0 2300h 100h res RES
 204h 1108h 0 0 0a200h 0
 209h 1108h 0 0 2200h 0
 90ah 1108h 0 0 6200h 0
-504h 1105h 0 0 2200h 10h resb RESB
+504h 1105h 0 0 2200h 100h resb RESB
 0f0eh 0 0 0 8d03h 0
 0f0eh 0f0eh 0 0 8d03h 0
 0f0eh 0f0eh 0f0eh 0 8d03h 0
@@ -297,68 +523,68 @@
 305h 205h 0 0 0b700h 0 sbc SBC
 304h 204h 0 0 0b600h 0 sbcb SBCB
 808h 0 0 0 7f00h 0 sc SC
-205h 505h 0 0 0b30bh 10h sda SDA
-204h 505h 0 0 0b20bh 10h sdab SDAB
-206h 505h 0 0 0b30fh 10h sdal SDAL
-205h 505h 0 0 0b303h 10h sdl SDL
-204h 505h 0 0 0b203h 10h sdlb SDLB
-206h 505h 0 0 0b307h 10h sdll SDLL
+205h 505h 0 0 0b30bh 100h sda SDA
+204h 505h 0 0 0b20bh 100h sdab SDAB
+206h 505h 0 0 0b30fh 100h sdal SDAL
+205h 505h 0 0 0b303h 100h sdl SDL
+204h 505h 0 0 0b203h 100h sdlb SDLB
+206h 505h 0 0 0b307h 100h sdll SDLL
 205h 308h 0 0 0a500h 0
 209h 308h 0 0 2500h 0
 90ah 308h 0 0 6500h 0
-505h 305h 0 0 2500h 10h set SET
+505h 305h 0 0 2500h 100h set SET
 204h 1108h 0 0 0a400h 0
 209h 1108h 0 0 2400h 0
 90ah 1108h 0 0 6400h 0
-504h 1105h 0 0 2400h 10h setb SETB
+504h 1105h 0 0 2400h 100h setb SETB
 0f0eh 0 0 0 8d01h 0
 0f0eh 0f0eh 0 0 8d01h 0
 0f0eh 0f0eh 0f0eh 0 8d01h 0
 0f0eh 0f0eh 0f0eh 0f0eh 8d01h 0 setflg SETFLG
 205h 1d03h 0 0 3b05h 0 sin SIN
 204h 1d03h 0 0 3a05h 0 sinb SINB
-609h 212h 505h 0 3b09h 18h sind SIND
-609h 212h 505h 0 3a09h 18h sindb SINDB
-609h 212h 505h 0 3b09h 10h sindr SINDR
-609h 212h 505h 0 3a09h 10h sindrb SINDRB
-609h 212h 505h 0 3b01h 18h sini SINI
-609h 212h 505h 0 3a01h 18h sinib SINIB
-609h 212h 505h 0 3b01h 10h sinir SINIR
-609h 212h 505h 0 3a01h 10h sinirb SINIRB
-205h 0 0 0 0b309h 11h
+609h 212h 505h 0 3b09h 108h sind SIND
+609h 212h 505h 0 3a09h 108h sindb SINDB
+609h 212h 505h 0 3b09h 100h sindr SINDR
+609h 212h 505h 0 3a09h 100h sindrb SINDRB
+609h 212h 505h 0 3b01h 108h sini SINI
+609h 212h 505h 0 3a01h 108h sinib SINIB
+609h 212h 505h 0 3b01h 100h sinir SINIR
+609h 212h 505h 0 3a01h 100h sinirb SINIRB
+205h 0 0 0 0b309h 101h
 205h 1d08h 0 0 0b309h 0 sla SLA
-204h 0 0 0 0b209h 11h
+204h 0 0 0 0b209h 101h
 204h 1d08h 0 0 0b209h 0 slab SLAB
-206h 0 0 0 0b30dh 11h
+206h 0 0 0 0b30dh 101h
 206h 1d08h 0 0 0b30dh 0 slal SLAL
-205h 0 0 0 0b301h 11h
+205h 0 0 0 0b301h 101h
 205h 1d08h 0 0 0b301h 0 sll SLL
-204h 0 0 0 0b201h 11h
+204h 0 0 0 0b201h 101h
 204h 1d08h 0 0 0b201h 0 sllb SLLB
-206h 0 0 0 0b305h 11h
+206h 0 0 0 0b305h 101h
 206h 1d08h 0 0 0b305h 0 slll SLLL
-612h 209h 505h 0 3b0bh 10h sotdr SOTDR
-612h 209h 505h 0 3a0bh 10h sotdrb SOTDRB
-612h 209h 505h 0 3b03h 10h sotir SOTIR
-612h 209h 505h 0 3a03h 10h sotirb SOTIRB
+612h 209h 505h 0 3b0bh 100h sotdr SOTDR
+612h 209h 505h 0 3a0bh 100h sotdrb SOTDRB
+612h 209h 505h 0 3b03h 100h sotir SOTIR
+612h 209h 505h 0 3a03h 100h sotirb SOTIRB
 1d03h 205h 0 0 3b07h 0 sout SOUT
 1d03h 204h 0 0 3a07h 0 soutb SOUTB
-612h 209h 505h 0 3b0bh 18h soutd SOUTD
-612h 209h 505h 0 3a0bh 18h soutdb SOUTDB
-612h 209h 505h 0 3b03h 18h souti SOUTI
-612h 209h 505h 0 3a03h 18h soutib SOUTIB
-205h 0 0 0 0b309h 31h
-205h 1d08h 0 0 0b309h 20h sra SRA
-204h 0 0 0 0b209h 31h
-204h 1d08h 0 0 0b209h 20h srab SRAB
-206h 0 0 0 0b30dh 31h
-206h 1d08h 0 0 0b30dh 20h sral SRAL
-205h 0 0 0 0b301h 31h
-205h 1d08h 0 0 0b301h 20h srl SRL
-204h 0 0 0 0b201h 31h
-204h 1d08h 0 0 0b201h 20h srlb SRLB
-206h 0 0 0 0b305h 31h
-206h 1d08h 0 0 0b305h 20h srll SRLL
+612h 209h 505h 0 3b0bh 108h soutd SOUTD
+612h 209h 505h 0 3a0bh 108h soutdb SOUTDB
+612h 209h 505h 0 3b03h 108h souti SOUTI
+612h 209h 505h 0 3a03h 108h soutib SOUTIB
+205h 0 0 0 0b309h 301h
+205h 1d08h 0 0 0b309h 200h sra SRA
+204h 0 0 0 0b209h 301h
+204h 1d08h 0 0 0b209h 200h srab SRAB
+206h 0 0 0 0b30dh 301h
+206h 1d08h 0 0 0b30dh 200h sral SRAL
+205h 0 0 0 0b301h 301h
+205h 1d08h 0 0 0b301h 200h srl SRL
+204h 0 0 0 0b201h 301h
+204h 1d08h 0 0 0b201h 200h srlb SRLB
+206h 0 0 0 0b305h 301h
+206h 1d08h 0 0 0b305h 200h srll SRLL
 305h 205h 0 0 8300h 0
 305h 1d08h 0 0 300h 0
 305h 209h 0 0 300h 0
@@ -382,14 +608,14 @@
 206h 0 0 0 9c08h 0
 209h 0 0 0 1c08h 0
 90ah 0 0 0 5c08h 0 testl TESTL
-209h 609h 505h 0 0b808h 10h trdb TRDB
-209h 609h 505h 0 0b80ch 10h trdrb TRDRB
-209h 609h 505h 0 0b800h 10h trib TRIB
-209h 609h 505h 0 0b804h 10h trirb TRIRB
-209h 609h 505h 0 0b80ah 10h trtdb TRTDB
-209h 609h 505h 0 0b80eh 1eh trtdrb TRTDRB
-209h 609h 505h 0 0b802h 10h trtib TRTIB
-209h 609h 505h 0 0b806h 1eh trtirb TRTIRB
+209h 609h 505h 0 0b808h 100h trdb TRDB
+209h 609h 505h 0 0b80ch 100h trdrb TRDRB
+209h 609h 505h 0 0b800h 100h trib TRIB
+209h 609h 505h 0 0b804h 100h trirb TRIRB
+209h 609h 505h 0 0b80ah 100h trtdb TRTDB
+209h 609h 505h 0 0b80eh 10eh trtdrb TRTDRB
+209h 609h 505h 0 0b802h 100h trtib TRTIB
+209h 609h 505h 0 0b806h 10eh trtirb TRTIRB
 205h 0 0 0 8d06h 0
 209h 0 0 0 0d06h 0
 90ah 0 0 0 4d06h 0 tset TSET
@@ -436,6 +662,7 @@
 30 .error .ERROR
 31 .exit .EXIT
 33 .warn .WARN
+51 .epuid .EPUID
 
 100h $
 1000h rh0 RH0
@@ -482,20 +709,20 @@
 1304h rq4 RQ4
 1308h rq8 RQ8
 130ch rq12 RQ12
-1401h lt LT
-1402h le LE
-1403h ule ULE
-1404h ov OV pe PE p P v V
+1401h lt LT flu FLU
+1402h le LE flue FLUE
+1403h ule ULE fle FLE
+1404h ov OV pe PE p P v V fun FUN
 1405h mi MI s S
-1406h z Z eq EQ
-1407h c C ult ULT
-1409h ge GE
-140ah gt GT
-140bh ugt UGT
-140ch nov NOV po PO
+1406h z Z eq EQ feq FEQ
+1407h c C ult ULT flt FLT
+1409h ge GE fge FGE
+140ah gt GT fgt FGT
+140bh ugt UGT fgu FGU
+140ch nov NOV po PO ford FORD
 140dh pl PL
-140eh nz NZ ne NE
-140fh nc NC uge UGE
+140eh nz NZ ne NE fneu FNEU
+140fh nc NC uge UGE fgeu FGEU
 150eh nvi NVI
 150dh vi VI
 1602h fcw FCW
@@ -505,4 +732,39 @@
 1606h nspseg NSPSEG
 1607h nspoff NSPOFF nsp NSP
 1701h flags FLAGS
-
+1800h f0 F0
+1801h f1 F1
+1802h f2 F2
+1803h f3 F3
+1804h f4 F4
+1805h f5 F5
+1806h f6 F6
+1807h f7 F7
+1900h sc SC
+1901h pc1 PC1
+1902h pc2 PC2
+1904h fflags FFLAGS
+1a06h fop1 FOP1
+1a07h fop2 FOP2
+1b00h ouflg OUFLG
+1b01h invflg INVFLG
+1b02h intflg INTFLG
+1b03h sysflg SYSFLG
+1b04h cmpflg CMPFLG
+1c01h inv INV
+1c02h fov FOV
+1c04h un UN
+1c08h dz DZ
+1c10h inx INX
+1c20h de DE
+1c40h nan NAN NaN
+1c80h ix IX
+1d00h rn RN
+1d10h rz RZ
+1d20h rp RP
+1d30h rm RM
+1e05h user USER
+1f01h sgl SGL
+1f03h dbl DBL
+; @(#)asz8k.pdc	3.2
+

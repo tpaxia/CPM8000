@@ -130,9 +130,12 @@ The top-level `make` runs these steps in order:
 
 The `src/cpm8k/` directory contains the CP/M-8000 system files from the
 Zilog CP/M-8000 1.1 product distribution disk. The assembler predef
-(`asz8k.pd`) has been corrected to fix the FMSKEL2 flag values (the
-product disk had shifted flag bits that caused LDM/LDIR/LDIRB instructions
-to be assembled incorrectly).
+(`asz8k.pd`) is the one from the product distribution, which is correct.
+An earlier copy carried over from an Alcyon cross-compiler experiment was
+corrupt — its FMSKEL2 flag bit was shifted (`100h`→`10h`) on 59 two-word
+instructions, so `asz8k` silently emitted `LDM`/`LDIR`/`LDIRB` (and the
+block/string ops) as truncated 2-byte instructions instead of 4-byte. That
+corrupt predef has been replaced with the correct distribution version.
 
 ## xoututils
 
