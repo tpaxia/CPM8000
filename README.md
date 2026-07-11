@@ -1,9 +1,14 @@
-# CPM8000 — CP/M-8000 for the Olivetti M20
+# CPM8000 — a CP/M-8000 development environment
 
-A port of CP/M-8000 to the Olivetti M20 (Z8001-based), built from the
-original Zilog/Digital Research CP/M-8000 sources — with the goal of
-rebuilding the system from those sources using the original DR/Zilog
-toolchain (C compiler, assembler, linker) running inside the emulator.
+A hosted emulator, build system, and toolchain for CP/M-8000 (Digital
+Research's Z8000 CP/M). The Olivetti M20 (Z8001) is the reference board, but
+the BIOS and build system are structured so that bringing up other
+CP/M-8000 boards is a well-defined task, not a rewrite.
+
+The system is built from the original Zilog/Digital Research CP/M-8000
+sources, with the goal of rebuilding the BIOS and utilities from source
+using the original DR/Zilog toolchain (C compiler, assembler, linker)
+running inside the emulator.
 
 The BIOS is derived from [4sun5bu/Z8001MB](https://github.com/4sun5bu/Z8001MB),
 adapted for the M20 hardware (different I/O addresses, serial configuration,
