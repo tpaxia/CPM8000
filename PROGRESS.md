@@ -352,7 +352,7 @@ make emu          # Build everything (lib + bios-emu + emulator)
 build/emu/cpm8k -d A=dir:drives/A
 
 # Boot a disk image as drive A:
-build/emu/cpm8k -d A=img:distribution/REL11A.IMG
+build/emu/cpm8k -d A=img:distribution/CPM_8000_1.1/REL11A.IMG
 
 # With BDOS call trace:
 build/emu/cpm8k -b -d A=dir:drives/A
@@ -361,16 +361,16 @@ build/emu/cpm8k -b -d A=dir:drives/A
 build/emu/cpm8k -t -d A=dir:drives/A
 
 # Piped test (quits on EOF after the DIR):
-echo "DIR" | build/emu/cpm8k -d A=img:distribution/REL11A.IMG 2>emu_stderr.txt
+echo "DIR" | build/emu/cpm8k -d A=img:distribution/CPM_8000_1.1/REL11A.IMG 2>emu_stderr.txt
 
 # Multiple commands via pipe:
-printf "DIR\nSTAT CPM.SYS\n" | build/emu/cpm8k -d A=img:distribution/REL11A.IMG 2>/dev/null
+printf "DIR\nSTAT CPM.SYS\n" | build/emu/cpm8k -d A=img:distribution/CPM_8000_1.1/REL11A.IMG 2>/dev/null
 
 # Warm boot test (run program, then DIR):
 printf "HELLO\nDIR\n" | build/emu/cpm8k -d A=dir:drives/A 2>/dev/null
 
 # Assembler test (image A + host dir C):
-printf "C:\nASZ8K BIOSBOOT.8KN\n" | build/emu/cpm8k -d A=img:distribution/REL11A.IMG -d C=dir:drives/C 2>/dev/null
+printf "C:\nASZ8K BIOSBOOT.8KN\n" | build/emu/cpm8k -d A=img:distribution/CPM_8000_1.1/REL11A.IMG -d C=dir:drives/C 2>/dev/null
 ```
 
 ### Debug Options

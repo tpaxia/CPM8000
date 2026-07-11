@@ -10,9 +10,18 @@ sources, with the goal of rebuilding the BIOS and utilities from source
 using the original DR/Zilog toolchain (C compiler, assembler, linker)
 running inside the emulator.
 
-The BIOS is derived from [4sun5bu/Z8001MB](https://github.com/4sun5bu/Z8001MB),
-adapted for the M20 hardware (different I/O addresses, serial configuration,
-IDE interface, memory map).
+`bios/` holds three separate BIOSes:
+
+- **`bios/emu/`** — a thin BIOS written for the emulator (bootstrap + trap
+  handler); it dispatches BDOS/BIOS calls to host services rather than
+  emulating hardware. This is the BIOS the emulator runs.
+- **`bios/M20/`** (sources also in `src/cpm8k/`) — the original Digital
+  Research / Olivetti M20 CP/M-8000 BIOS (`bios.c` plus `.8kn` assembly),
+  from the distribution disks. This is what the from-source build produces.
+- **`bios/z8001/`** — a BIOS for real Z8001 hardware, derived from
+  [4sun5bu/Z8001MB](https://github.com/4sun5bu/Z8001MB) (MIT) and adapted for
+  an M20-like board (i8251 UART, IDE disk, Z8530 SCC). It is *not* the
+  original M20 BIOS; see `bios/z8001/README.md`.
 
 ## Emulator
 
@@ -47,7 +56,7 @@ make emu         # build the hosted emulator binary
 
 # run the emulator (at least one drive must be mapped)
 build/emu/cpm8k -d A=dir:drives/A                  # drive A = host directory
-build/emu/cpm8k -d A=img:distribution/REL11A.IMG   # drive A = CP/M disk image
+build/emu/cpm8k -d A=img:distribution/CPM_8000_1.1/REL11A.IMG   # drive A = CP/M disk image
 ```
 
 All build artifacts go into `build/`.
@@ -59,7 +68,7 @@ CP/M-8000 disk image with `-d X=dir:PATH` or `-d X=img:PATH`; the two backends
 can be mixed in one session, e.g.:
 
 ```
-build/emu/cpm8k -d A=img:distribution/REL11A.IMG -d C=dir:drives/C
+build/emu/cpm8k -d A=img:distribution/CPM_8000_1.1/REL11A.IMG -d C=dir:drives/C
 ```
 
 Drives need not start at `A`. The system boots with the **smallest configured
