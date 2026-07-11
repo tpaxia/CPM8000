@@ -27,7 +27,8 @@ See [PROGRESS.md](PROGRESS.md) for detailed architecture documentation.
 
 ## Prerequisites
 
-- **z8k-coff binutils** — build GNU Binutils with `--target=z8k-coff`
+- **z8k-coff binutils** — build GNU Binutils with `--target=z8k-coff`.
+  Prebuilt/patched sources: [tpaxia/binutils-2.46.0](https://github.com/tpaxia/binutils-2.46.0)
 - **C++17 compiler** — for the Z8001 emulator and host program
 
 ## Quick start
