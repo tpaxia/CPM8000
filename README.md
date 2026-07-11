@@ -18,10 +18,12 @@ running inside the emulator.
 - **`bios/M20/`** (sources also in `src/cpm8k/`) — the original Digital
   Research / Olivetti M20 CP/M-8000 BIOS (`bios.c` plus `.8kn` assembly),
   from the distribution disks. This is what the from-source build produces.
-- **`bios/z8001/`** — a BIOS for real Z8001 hardware, derived from
-  [4sun5bu/Z8001MB](https://github.com/4sun5bu/Z8001MB) (MIT) and adapted for
-  an M20-like board (i8251 UART, IDE disk, Z8530 SCC). It is *not* the
-  original M20 BIOS; see `bios/z8001/README.md`.
+- **`bios/z8001/`** — a BIOS for real Z8001 hardware (the CPM8000 board).
+  It is essentially 4sun5bu's [Z8001MB](https://github.com/4sun5bu/Z8001MB)
+  BIOS (MIT) — the BIOS dispatch and memory configuration are Z8001MB's —
+  with the system origin, I/O port addresses, and serial/IDE config changed
+  for the board. It is *not* the Olivetti M20 BIOS; see
+  `bios/z8001/README.md` and `CHANGES.md`.
 
 ## Emulator
 
@@ -146,10 +148,13 @@ These are a C port of the Go tools by 4sun5bu
 
 ## BIOS
 
-The `bios/z8001/` directory contains the CP/M-8000 BIOS adapted from
-4sun5bu's Z8001MB project for a machine with M20-like hardware. This is
-**not** the original Olivetti M20 BIOS. See `bios/z8001/CHANGES.md` for
-details and `bios/z8001/z8001mb-to-m20.patch` for the full diff.
+The `bios/z8001/` directory is 4sun5bu's Z8001MB BIOS adapted for the
+CPM8000 board — a Z8001MB-based design. The BIOS dispatch and memory
+mapping come straight from Z8001MB (`bios.s`, `biosmem.s`, etc. are
+unchanged); the changes are the system origin, I/O port addresses, and
+serial/IDE configuration. See `bios/z8001/CHANGES.md` for the summary and
+`bios/z8001/z8001mb-to-m20.patch` for the full diff. This is **not** the
+original Olivetti M20 BIOS — those sources are in `src/cpm8k/`.
 
 ## Acknowledgments
 

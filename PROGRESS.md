@@ -487,9 +487,9 @@ Caveat -- the DISTRIBUTION linker binary is buggy: the `ld8k.z8k` shipped in
 transition ("p2 can't open <obj>", even on a single object, no OS call). This
 is a bug in that binary, NOT the emulator: a linker rebuilt from source
 (`drives/LINK/ld8k.c` -> `ld8k.z8k`, 29310 bytes) links the same objects
-correctly. The from-source linker is the one staged in `drives/C` for the
-build; `src/cpm8k/ld8k.z8k` should be replaced with it to make the source
-build reproducible.
+correctly. `src/cpm8k/ld8k.z8k` has been replaced with that from-source
+build, so the source build is reproducible (`drives/LINK/LINK.SUB` rebuilds
+`ld8k`/`ar8k`/`xcon`/`xdump` from their `.c` sources).
 
 ### Host-dir parity fixes (image drives exposed these)
 - `fcb_drive` now treats FCB drive byte `'?'` (0x3F, "any user") as the
