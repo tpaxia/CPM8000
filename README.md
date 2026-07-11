@@ -1,7 +1,9 @@
 # CPM8000 — CP/M-8000 for the Olivetti M20
 
 A port of CP/M-8000 to the Olivetti M20 (Z8001-based), built from the
-original Zilog/Digital Research sources using GNU cross-tools.
+original Zilog/Digital Research CP/M-8000 sources — with the goal of
+rebuilding the system from those sources using the original DR/Zilog
+toolchain (C compiler, assembler, linker) running inside the emulator.
 
 The BIOS is derived from [4sun5bu/Z8001MB](https://github.com/4sun5bu/Z8001MB),
 adapted for the M20 hardware (different I/O addresses, serial configuration,
@@ -27,8 +29,8 @@ See [PROGRESS.md](PROGRESS.md) for detailed architecture documentation.
 
 ## Prerequisites
 
-- **z8k-coff binutils** — build GNU Binutils with `--target=z8k-coff`.
-  Prebuilt/patched sources: [tpaxia/binutils-2.46.0](https://github.com/tpaxia/binutils-2.46.0)
+- **z8k-coff binutils** — GNU Binutils with `--target=z8k-coff`;
+  fork at [tpaxia/binutils-2.46.0](https://github.com/tpaxia/binutils-2.46.0)
 - **C++17 compiler** — for the Z8001 emulator and host program
 
 ## Quick start
