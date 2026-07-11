@@ -1,0 +1,22 @@
+# Olivetti M20 CP/M-8000 DS/DD floppy (MAME disk image format)
+# MAME uses uniform 256-byte sectors throughout the image.
+# On real hardware, cyl 0 head 0 uses 128-byte FM sectors;
+# see IMG.CFG for FlashFloppy translation to physical format.
+# 35 cylinders, 2 heads, 16 sectors/track, 256 bytes/sector
+# DPB from bios.c dpb1: spt=32 bsh=4 blm=15 exm=1 dsm=134 drm=63 off=3
+#
+# Usage: append to system diskdefs, then use -f <format>
+#   cat diskdefs/diskdefs >> $(cpmls -h 2>&1 | grep -o '/.*diskdefs' || echo /opt/homebrew/share/diskdefs)
+#   cpmls -f m20 distribution/cpm_m20.img
+#   cpmls -f ibm-3740 distribution/CPM_8000_1.1/8K_1OF4.IMG
+diskdef m20
+  seclen 256
+  tracks 70
+  sectrk 16
+  blocksize 2048
+  maxdir 64
+  boottrk 3
+  os 2.2
+end
+# Distribution images (CPM_8000_1.1/*.IMG) are standard IBM 3740 format:
+#   cpmtools -f ibm-3740 (77 tracks, 26×128 sectors, 6:1 skew)

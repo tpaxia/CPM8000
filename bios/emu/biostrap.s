@@ -93,7 +93,9 @@ bdossc:
 	ld	r0, scfcw+4(r15)
 	and	r0, #0xC000
 	jr	nz, 1f
-	ld	r6, r4			! non-seg: add caller seg to param
+	ld	r6, r4			! non-seg: caller seg into param high word
+	srl	r6, #8			! native segment word -> plain segment
+	and	r6, #0x007F		! number (emulator long-address format)
 1:
 	out	#PORT_BDOS, r0		! C++ router: sets r0 = handled flag (and rr6 if handled)
 	test	r0
@@ -105,13 +107,16 @@ bdossc:
 	ret
 
 bdos_native:
-	! Call real BDOS internal dispatcher: long __bdos(int func, long param)
-	! Uses __bdos (internal C dispatcher with switch table) instead of _bdos
-	! (SC #2 thunk) to avoid infinite recursion through our smart bdossc.
+	! Call real BDOS internal dispatcher: long __bdos(int func, int info, long param)
+	! The argument list must match the BDOS's own SC#2 entry stub, which
+	! pushes the param long, then the raw param low word, then the function
+	! code. Uses __bdos (internal C dispatcher with switch table) instead of
+	! _bdos (SC #2 thunk) to avoid infinite recursion through our smart bdossc.
 	pushl	@r15, rr6		! push param (long)
+	push	@r15, r7		! push info (raw param low word)
 	push	@r15, r5		! push func
 	call	__bdos
-	add	r15, #6			! clean stack
+	add	r15, #8			! clean stack
 	ld	cr6+4(r15), r6		! store return rr6
 	ld	cr7+4(r15), r7
 	SEG

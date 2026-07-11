@@ -51,6 +51,20 @@ bool g_verbose = false;
 // Warm boot flag
 bool g_warm_boot = false;
 
+// True if the most recently dispatched TPA program was split I/D (data at
+// 0x20000). On the following warm boot the CCP reads the pending P_CHAIN
+// command via segment 0's data map; a split program leaves that command in
+// its data segment (0x20000), so seg 0 must map there, not to the merged
+// TPA (0x10000), or multi-pass tools (e.g. the C compiler zcc1->zcc2->zcc3)
+// lose the chain command and the pass never loads.
+bool g_last_prog_split = false;
+
+// Set when a program calls P_CHAIN (BDOS 47); consumed by the next warm boot.
+// Only a genuine chain needs the split-data seg-0 mapping preserved (above);
+// a normal program exit must NOT, or the CCP would read stale data in the
+// split data segment as a bogus command.
+bool g_chain_pending = false;
+
 // BDOS state sync: offsets within system segment (from COFF symbol table)
 // Kept for symbol table lookup diagnostics; no longer synced at runtime.
 uint16_t g_bdos_dma_offset = 0;
@@ -460,9 +474,11 @@ private:
             if (seg == SEG_TPA_SPLIT) {
                 // Split I/D: I-space = code (0x10000), D-space = data (0x20000)
                 m_mem.set_segment(0x00, 0x10000, 0x20000);
+                g_last_prog_split = true;
             } else {
                 // Merged I/D: both I and D at TPA (0x10000)
                 m_mem.set_segment_unified(0x00, 0x10000);
+                g_last_prog_split = false;
             }
         }
 
@@ -580,6 +596,13 @@ int main(int argc, char* argv[])
         if (drive_is_host(d))
             fs.set_drive_path(d, drive_path(d));
 
+    // Default the current drive to the smallest configured drive, so the CCP
+    // boots there instead of always assuming A (which errors if A is not
+    // mapped). The CCP reads its cold-boot drive via DRV_GET, which returns
+    // this. (drive_login_vector() != 0 was checked above, so one exists.)
+    for (int d = 0; d < NUM_DRIVES; d++)
+        if (drive_present(d)) { fs.set_default_drive(d); break; }
+
     // Configure MMU segment table (separate I-space and D-space per segment)
     //   Seg   I-space   D-space   Purpose
     //   0x00  0x10000   0x10000   Non-seg fallback (= TPA for normal-mode programs)
@@ -661,7 +684,16 @@ int main(int argc, char* argv[])
     uint16_t saved_psap_off = 0;
     do {
         g_warm_boot = false;
-        mem.set_segment_unified(0x00, 0x10000);
+
+        // Reset the normal-mode TPA (segment 0). After a split-I/D program the
+        // CCP still needs to read that program's pending P_CHAIN command out of
+        // its data segment (0x20000), so keep the split data map for one warm
+        // boot; the next program dispatch (map_adr) reconfigures segment 0.
+        if (!cold_boot && g_last_prog_split && g_chain_pending)
+            mem.set_segment(0x00, 0x10000, 0x20000);
+        else
+            mem.set_segment_unified(0x00, 0x10000);
+        g_chain_pending = false;
 
         // Cold boot: C runtime startup (clears BSS, calls main -> ccp)
         // Warm boot: jump directly to ccp() to preserve BSS state

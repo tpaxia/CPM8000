@@ -1,12 +1,13 @@
 # CP/M-8000 Emulator - Progress & Issues
 
-## Status: Fully functional. CCP, built-in commands, file I/O, transient programs, P_CHAIN, SUBMIT, and split I/D assembler tools all work.
+## Status: Functional. CCP, built-in commands, file I/O, transient programs, P_CHAIN, SUBMIT, and split I/D assembler tools all work. Disk-image drives and host-directory drives are both fully working -- boot, DIR, TYPE, STAT, transient program load, ERA, and PIP file copy (create + write) work on either backend and interoperate in the same session.
 
 ## What Works
 - Z8001 CPU emulator with native trap/IRET mechanism for all SC calls
 - CCP boots from cpm.sys (COFF binary loaded into segment 0x0B)
 - CP/M-8000 banner displays: "CP/M-8000(tm) Version 1.1 12/19/84"
-- `A>` prompt appears
+- Boots at the smallest configured drive letter (e.g. `B>` if only B and C
+  are mapped) -- not hardcoded to `A>`, so `A` need not be configured
 - BDOS functions dispatched correctly (SC #2 via assembly trap handler)
 - BIOS functions dispatched correctly (SC #3 via assembly trap handler)
 - Memory management SC #0 and SC #1 (xfer, mem_cpy, map_adr) implemented
@@ -17,7 +18,10 @@
 - DIR command lists files from host directories
 - TYPE command displays file contents
 - STAT runs correctly (transient program via xfer)
-- EXIT command quits the emulator; Ctrl-D also works
+- Typing `EXIT` (or `QUIT`) at the prompt quits the emulator cleanly, in
+  both interactive and piped sessions. Piped/redirected stdin also quits on
+  end-of-input (EOF). Note: raw mode clears ICANON and ISIG, so Ctrl-D and
+  Ctrl-C are delivered as raw bytes (not EOF / not SIGINT) -- use `EXIT`.
 - Warm boot cycle works (program exit -> CCP restart, preserves CCP BSS state)
 - Split I/D programs load and execute correctly (separate code/data segments)
 - P_CHAIN (BDOS func 47) chains programs via warm boot with saved command line
@@ -61,10 +65,19 @@ is correct per the spec.
 The CP/M-8000 CCP is written in C and may expect null-terminated
 strings. Added null byte after the last input character.
 
-### 5. Added EXIT command and Ctrl-D to quit emulator
-- Typing "EXIT" at the A> prompt cleanly exits the emulator
-- Pressing Ctrl-D exits immediately
-- Pipe EOF at start of input also exits cleanly
+### 5. Quitting the emulator: `EXIT` command + stdin EOF
+- `EXIT` (or `QUIT`) typed as the whole command line quits. It is caught in
+  the C++ line reader (bdos_read_console_line, the C_READSTR handler that the
+  emulator services for the CCP), which calls request_halt() -- stopping the
+  run loop before the CCP acts on the line, so nothing extra is printed. The
+  match is case-insensitive and trims surrounding spaces; `EXIT` as a command
+  *argument* (e.g. `STAT EXIT.TXT`) does not trigger it.
+- stdin EOF also quits: console_in() sees read()==0, sets an EOF flag, and
+  the BIOS CONIN handler requests a halt. This is what makes piped input
+  (`printf "...\n" | cpm8k`) exit at end-of-input.
+- Ctrl-D / Ctrl-C do NOT quit on an interactive tty: raw mode clears ICANON
+  (Ctrl-D is byte 0x04, not EOF) and ISIG (Ctrl-C is byte 0x03, not SIGINT).
+  Use `EXIT`.
 
 ### 6. xfer (context switch) failed to change CPU segment
 The original design intercepted all SC instructions via a C++ callback
@@ -325,29 +338,39 @@ D -> data).
   from consuming pipe data during output (Ctrl-S/C check)
 
 ## Build & Test Commands
+
+At least one drive must be mapped with `-d X=dir:PATH` (host directory) or
+`-d X=img:PATH` (disk image); running with no drives just prints usage.
+Type `EXIT` (or `QUIT`) at the prompt to quit; piped/redirected input also
+quits on EOF. (Ctrl-D and Ctrl-C do not quit -- raw mode passes them through
+as bytes.)
+
 ```bash
 make emu          # Build everything (lib + bios-emu + emulator)
 
-# Interactive test:
-build/emu/cpm8k
+# Interactive test (host-directory drive A):
+build/emu/cpm8k -d A=dir:drives/A
+
+# Boot a disk image as drive A:
+build/emu/cpm8k -d A=img:distribution/REL11A.IMG
 
 # With BDOS call trace:
-build/emu/cpm8k -b
+build/emu/cpm8k -b -d A=dir:drives/A
 
 # With CPU trace:
-build/emu/cpm8k -t
+build/emu/cpm8k -t -d A=dir:drives/A
 
-# Piped test:
-echo "DIR" | build/emu/cpm8k 2>emu_stderr.txt
+# Piped test (quits on EOF after the DIR):
+echo "DIR" | build/emu/cpm8k -d A=img:distribution/REL11A.IMG 2>emu_stderr.txt
 
 # Multiple commands via pipe:
-printf "DIR\nEXIT\n" | build/emu/cpm8k 2>/dev/null
+printf "DIR\nSTAT CPM.SYS\n" | build/emu/cpm8k -d A=img:distribution/REL11A.IMG 2>/dev/null
 
 # Warm boot test (run program, then DIR):
-printf "HELLO\nDIR\n" | build/emu/cpm8k 2>/dev/null
+printf "HELLO\nDIR\n" | build/emu/cpm8k -d A=dir:drives/A 2>/dev/null
 
-# Assembler test:
-printf "C:\nASZ8K BIOSBOOT.8KN\n" | build/emu/cpm8k 2>/dev/null
+# Assembler test (image A + host dir C):
+printf "C:\nASZ8K BIOSBOOT.8KN\n" | build/emu/cpm8k -d A=img:distribution/REL11A.IMG -d C=dir:drives/C 2>/dev/null
 ```
 
 ### Debug Options
@@ -358,8 +381,134 @@ printf "C:\nASZ8K BIOSBOOT.8KN\n" | build/emu/cpm8k 2>/dev/null
 -m    Memory bus trace (all read/write with physical addresses)
 ```
 
+## Disk Image Drives (per-drive img/dir backends)
+
+Drives can be mapped independently to a host directory (`-d X=dir:PATH`) or a
+CP/M disk image (`-d X=img:PATH`). Host-dir drives are serviced at the BDOS
+file level by `CpmFileSystem`; image drives go through the native CP/M-8000
+BDOS doing real sector I/O via the BIOS block handlers against the image file.
+
+Working: cold boot, DIR, TYPE, STAT (bare + with arg), transient program load
+(PGMLD), ERA (directory writes persist to the image), and PIP file copy
+(create + write, verified persisting across a reopen) all work on image
+drives, and interoperate with host-dir drives in the same session -- copies
+in every direction (img->img, img->host, host->img, host->host) succeed.
+
+### Image-drive bugs fixed (this pass)
+1. **DPH built in wrong format (caused DIR hang / .text corruption).**
+   `bios_init_disks` wrote a 26-byte DPH with 4-byte *segmented* pointers.
+   This CP/M-8000 is non-segmented C: `struct dph` (src/cpm8k/bios.c) is 16
+   bytes with 16-bit *near* pointers. The BDOS read the DPB/CSV/ALV pointers
+   at the wrong offsets, got garbage (0x000B = BIOS code), and scattered
+   allocation-vector bit writes into the system .text -- clobbering `_tabout`
+   and hanging in a zeroed instruction loop. Rebuilt the DPH as 16 bytes of
+   near pointers; SELDSK returns the DPH as a near pointer too.
+2. **`bdos_native` argument list didn't match the BDOS SC#2 stub.** The
+   assembly bridge pushed `(func, param)`; the real `__bdos` entry expects
+   `(func, info, param)` (function code, raw param low word, param long).
+   Added the missing `info` word and adjusted stack cleanup.
+3. **Non-seg caller segment passed to C++ router in native format.**
+   `bdossc` put the raw Z8001 segment word (bit 7 set, seg in high byte)
+   into the param; the C++ FCB code expects a plain 0..127 segment. Added
+   `srl #8` + mask.
+4. **BIOS console/misc functions returned only r7, not rr6.** CONST/CONIN/
+   READER/LISTST/MAXDRV set r7 but left r6 stale; the BDOS reads the full
+   `long`. Switched to `set_reg_long(6, ...)`.
+5. **BIOS FLUSH/FLUSH2 returned a stale register -> spurious "disk write
+   error".** The handler called `fflush()` but never set a return value, so
+   the BDOS read the leftover `rr6` (whatever the caller happened to leave
+   there) as a disk error code. The BDOS calls FLUSH to commit buffers after
+   a file read/close; when the stale value was nonzero it aborted the whole
+   operation with "CP/M Disk write error", even though no sector write had
+   failed (and none had even been attempted). This is what blocked PIP from
+   creating a file on an image drive: PIP finished reading the source, the
+   BDOS auto-flushed, FLUSH returned garbage, and PIP bailed before ever
+   issuing F_MAKE. Fixed to return 0 on success (1 if `fflush` fails). Latent
+   and register-state-dependent -- it only bit when the stale value happened
+   to be nonzero, which is why plain DIR/TYPE/STAT reads usually survived it.
+
+### Per-drive DPBs sized from the image (hard-disk image support)
+Each drive now gets its OWN disk parameter block (previously all drives
+shared one hardcoded M20 floppy DPB). For image drives the geometry is
+derived from the image file's size (`derive_dpb` in cpm8k_bios.cpp), and the
+CSV/ALV are sized from it, so a large hard-disk image reports and uses its
+full capacity instead of being clamped to a 270K floppy. Details:
+- Floppy-sized images (<= 512K) keep the exact M20 floppy geometry verbatim,
+  so existing distribution images stay byte-compatible (deriving a slightly
+  different geometry would misread their directory/allocation).
+- Larger images get a scaled geometry: `spt`/reserved tracks stay at the M20
+  values (the BIOS sector math is `trk*4096 + sec*128`), the block size grows
+  2K -> 4K -> 8K -> 16K to keep the allocation vector bounded, and the
+  directory is capped at 16 blocks because the `al0:al1` directory bitmap is
+  only 16 bits (1024 entries at 2K blocks, more with bigger blocks).
+- Verified: a fresh 8 MB image (`\xE5`-filled = empty CP/M disk) reports
+  ~8,146K free, accepts PIP writes that persist across a reopen, and the
+  free count drops by one block per file -- real accounting, not a stub.
+- Mixed sessions work per-drive: a floppy image, a hard-disk image, and a
+  host directory can coexist, each with its own geometry.
+
+### Default drive = smallest configured drive
+The CCP reads its cold-boot drive via BDOS DRV_GET (func 25), which the
+emulator answers from `CpmFileSystem`'s current drive. That current drive
+(and the DRV_ALLRESET target) now defaults to the smallest *configured* drive
+instead of always 0/A: `main()` scans the drive table and calls
+`fs.set_default_drive(first_present)`. So a session with only B and C mapped
+boots at `B>` and works, rather than issuing a "disk select error on drive A".
+Command-line order is irrelevant -- the lowest drive letter wins. When A is
+mapped, behaviour is unchanged (still `A>`).
+
+### Split-I/D P_CHAIN fix (multi-pass tools: C compiler, assembler)
+Multi-pass tools chain pass-to-pass with P_CHAIN (BDOS 47): a warm boot where
+the CCP reads the pending command out of the finishing program's data at a
+high offset (~0xFCxx), via segment 0's data map. The warm-boot loop reset
+segment 0 to the *merged* TPA (0x10000) before that read, so a **split-I/D**
+program's command -- which lives in its data segment at 0x20000 -- was
+unreachable and the next pass never loaded. Symptom: the C compiler produced a
+0-byte object (zcc -> zcc1 chained, but zcc1 -> zcc2 did not), and the
+assembler's `asz8k -> xcon` conversion silently failed.
+Fix: track whether the last-dispatched TPA program was split I/D
+(`g_last_prog_split`, set in `map_adr`) and whether a P_CHAIN is pending
+(`g_chain_pending`, set on BDOS 47). On the next warm boot, if both hold, keep
+segment 0's data map pointing at the split data segment (0x20000) so the CCP
+reads the command from the right place; the following program dispatch
+reconfigures segment 0 as usual. Gating on the pending flag is required: a
+normal split-program *exit* must still reset to the merged TPA, or the CCP
+reads stale split-data as a bogus command. Verified end to end: `zcc`
+compiles `bios.c` to a real object, and `asz8k` chains to `xcon` to produce
+`biosasm.o`.
+
+With this fix the full BIOS builds end to end from `src/cpm8k` in the
+emulator: `zcc` compiles `bios.c`, `asz8k`->`xcon` assembles `biosasm.8kn`,
+`ld8k` links `bios.rel` (20352 bytes, matching the distribution's prebuilt
+copy), and `ar8k` archives `bios.a`.
+
+Caveat -- the DISTRIBUTION linker binary is buggy: the `ld8k.z8k` shipped in
+`src/cpm8k` (Linker "V1.01j", 28416 bytes) fails its own pass-1->pass-2
+transition ("p2 can't open <obj>", even on a single object, no OS call). This
+is a bug in that binary, NOT the emulator: a linker rebuilt from source
+(`drives/LINK/ld8k.c` -> `ld8k.z8k`, 29310 bytes) links the same objects
+correctly. The from-source linker is the one staged in `drives/C` for the
+build; `src/cpm8k/ld8k.z8k` should be replaced with it to make the source
+build reproducible.
+
+### Host-dir parity fixes (image drives exposed these)
+- `fcb_drive` now treats FCB drive byte `'?'` (0x3F, "any user") as the
+  current drive so STAT's directory enumeration routes to the host backend.
+- `file_search_first` forces an all-`?` name match when the FCB drive byte
+  is `'?'`, so STAT sees every entry (it filters names itself).
+- Added host-dir handling for DRV_DPB (31), DRV_ALLOCVEC (27) -- return the
+  synthetic DPB/ALV from `bios_init_disks` -- and DRV_FREESPACE (46) --
+  write the synthetic disk's full record count to the DMA. Without these the
+  native BDOS tried sector I/O on host-dir drives ("disk select/read error").
+
 ## Known Issues / TODO
-- No Ctrl-C signal handling in interactive mode
-- BIOS disk functions are stubs (all file I/O goes through host BDOS)
+- Ctrl-C / Ctrl-D do not quit on an interactive tty. Raw mode clears ICANON
+  and ISIG, so Ctrl-D is byte 0x04 (not EOF) and Ctrl-C is byte 0x03 (not
+  SIGINT). Quitting is via the `EXIT`/`QUIT` command (or stdin EOF for piped
+  input); a control-key quit / SIGINT handler is not implemented.
+- Host-directory drives still report a fixed synthetic capacity (the default
+  M20 floppy geometry, ~270K) for STAT free space -- a host directory has no
+  CP/M allocation map, so this is a stub, not the host filesystem's real free
+  space. (Image drives now report real, size-derived free space.)
 - File stale-check removed -- if the same FCB address is reused for a
   different file without closing the previous one, the old slot leaks

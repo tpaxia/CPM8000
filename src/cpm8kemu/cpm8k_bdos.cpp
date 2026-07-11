@@ -2,6 +2,7 @@
 #include "cpm8k_mem.h"
 #include "cpm8k_drives.h"
 #include "cpm8k_console.h"
+#include "cpm8k_bios.h"
 #include <cstdio>
 #include <cstring>
 
@@ -97,6 +98,7 @@ static constexpr int NUM_BDOS_FUNCS = sizeof(s_bdos_funcs) / sizeof(s_bdos_funcs
 
 // Extern references
 extern SegmentedMemory* g_mem;
+extern bool g_chain_pending;   // set on P_CHAIN; consumed by the warm-boot loop
 
 // --- BDOS Function 59: Program Load (PGMLD) ---
 // Loads an x.out format program into the TPA.
@@ -397,8 +399,37 @@ static void bdos_trace_call(uint16_t func, z8002_device& cpu, SegmentedMemory& m
 static int fcb_drive(SegmentedMemory& mem, uint8_t seg, uint16_t fcb_off,
                      CpmFileSystem& fs)
 {
-    uint8_t d = mem.read_byte((uint32_t(seg) << 16) | fcb_off) & 0x1F;
+    uint8_t raw = mem.read_byte((uint32_t(seg) << 16) | fcb_off);
+    if (raw == '?')                     // '?' = current drive, match any user
+        return fs.get_current_drive();
+    uint8_t d = raw & 0x1F;
     return d ? (d - 1) : fs.get_current_drive();
+}
+
+// True if the n console-line bytes at `addr`, once trimmed of surrounding
+// spaces/tabs and upper-cased, exactly equal `word`.
+static bool console_line_is(const SegmentedMemory& mem, uint32_t addr,
+                            uint8_t n, const char* word)
+{
+    uint8_t start = 0, end = n;
+    while (start < end) {
+        uint8_t c = mem.read_byte(addr + start);
+        if (c != ' ' && c != '\t') break;
+        start++;
+    }
+    while (end > start) {
+        uint8_t c = mem.read_byte(addr + end - 1);
+        if (c != ' ' && c != '\t') break;
+        end--;
+    }
+    size_t len = strlen(word);
+    if ((size_t)(end - start) != len) return false;
+    for (size_t i = 0; i < len; i++) {
+        uint8_t c = mem.read_byte(addr + start + i);
+        if (c >= 'a' && c <= 'z') c = (uint8_t)(c - 32);   // upper-case
+        if (c != (uint8_t)word[i]) return false;
+    }
+    return true;
 }
 
 // BDOS func 10: C_READSTR -- read an edited console line into the caller's
@@ -444,6 +475,17 @@ static int bdos_read_console_line(z8002_device& cpu, SegmentedMemory& mem,
     }
 
     mem.write_byte(base + 1, n);
+
+    // "EXIT" (or "QUIT") typed as the whole command line quits the emulator.
+    // There is no EXIT.Z8K program; the emulator provides this at the line
+    // read so it works on any drive and in interactive (raw-mode) sessions,
+    // where Ctrl-D/Ctrl-C are just bytes and can't signal EOF. request_halt()
+    // stops the run loop before the CCP acts on the line (same mechanism as
+    // the EOF path above), so no "EXIT?" is printed.
+    if (console_line_is(mem, base + 2, n, "EXIT") ||
+        console_line_is(mem, base + 2, n, "QUIT"))
+        cpu.request_halt();
+
     return 0;
 }
 
@@ -497,6 +539,22 @@ bool bdos_route(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
     case 24: // DRV_LOGINVEC -- report every configured drive (host + image)
         return handled(drive_login_vector());
 
+    case 27:   // DRV_ALLOCVEC -- pointer to allocation vector
+    case 31: { // DRV_DPB -- pointer to disk parameter block
+        // For HOST_DIR drives the native BDOS would log the drive in with
+        // sector I/O, which they don't have. Serve the synthetic structures
+        // built by bios_init_disks instead (the ALV stays zeroed; free-space
+        // numbers on a host dir are nominal anyway). IMAGE drives keep the
+        // native BDOS's real, login-maintained structures.
+        int drv = fs.get_current_drive();
+        if (!drive_is_host(drv))
+            return false;
+        uint16_t off = (func == 27) ? bios_alv_offset(drv) : bios_dpb_offset(drv);
+        cpu.set_reg(6, off ? 0x0B : 0);  // system segment
+        cpu.set_reg(7, off);
+        return true;
+    }
+
     case 26: { // F_DMAOFF -- mirror to fs; native BDOS still needs its own
         uint16_t dma_seg = cpu.get_reg(6);
         fs.set_dma((uint32_t(dma_seg) << 16) | param_lo);
@@ -530,6 +588,21 @@ bool bdos_route(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
         return false; // unreachable
     }
 
+    case 46: { // DRV_FREESPACE -- free record count into the current DMA
+        uint8_t drv = param_lo & 0x0F;
+        if (!drive_is_host(drv))
+            return false;   // image: native BDOS computes from the real ALV
+        // A host directory has no real CP/M allocation state; report the
+        // synthetic disk's full capacity as a 32-bit big-endian record count
+        // at the DMA, matching the native BDOS's result format. (This is a
+        // stub -- a host directory isn't bounded by a CP/M allocation map.)
+        uint32_t recs = bios_drive_total_recs(drv);
+        uint32_t dma = fs.get_dma();
+        for (int i = 0; i < 4; i++)
+            mem.write_byte(dma + i, (recs >> (24 - 8 * i)) & 0xFF);
+        return handled(0);
+    }
+
     case 18: // F_SNEXT -- continue the most recent search on its backend
         if (s_last_search_host)
             return handled(fs.file_search_next());
@@ -544,6 +617,12 @@ bool bdos_route(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
             return false; // image program -> native BDOS PGMLD
         return handled(bdos_pgmld(mem, fs, param_lo));
     }
+
+    case 47:  // P_CHAIN -- serviced by the native BDOS, but flag it so the
+        // next warm boot preserves a split-I/D program's data mapping (the
+        // pending chain command lives in its data segment). See main.cpp.
+        g_chain_pending = true;
+        return false;
 
     default:
         // Console / system calls and image-only services: native BDOS.

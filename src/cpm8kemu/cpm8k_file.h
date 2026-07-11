@@ -69,6 +69,11 @@ public:
     void set_current_drive(int drive) { m_current_drive = drive; }
     int get_current_drive() const { return m_current_drive; }
 
+    // Boot/default drive: the current drive after a cold boot or a
+    // DRV_ALLRESET. Defaults to A (0); main() sets it to the smallest
+    // configured drive so booting works when drive A is not mapped.
+    void set_default_drive(int drive) { m_default_drive = drive; m_current_drive = drive; }
+
     // User number
     void set_user(int user) { m_user = user; }
     int get_user() const { return m_user; }
@@ -105,6 +110,7 @@ private:
     SegmentedMemory& m_mem;
     std::string m_drive_paths[MAX_DRIVES];
     int m_current_drive;
+    int m_default_drive;
     int m_user;
     uint32_t m_dma_addr; // segmented address for DMA
     uint8_t m_caller_seg; // caller's segment (from PC when SC intercepted)

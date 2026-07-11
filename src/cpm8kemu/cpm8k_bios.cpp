@@ -72,6 +72,9 @@ static const char* bios_func_name(int f)
 // BIOS sector handlers.
 static FILE* s_disk_fp[NUM_DRIVES] = {nullptr};
 static uint16_t s_dph_offset[NUM_DRIVES] = {0};
+static uint16_t s_alv_offset[NUM_DRIVES] = {0};
+static uint16_t s_dpb_offset[NUM_DRIVES] = {0};
+static uint32_t s_drive_total_recs[NUM_DRIVES] = {0}; // (dsm+1)*(blocksize/128)
 static int s_num_image_drives = 0;
 static int s_max_drive = 0;       // highest image drive index + 1 (for MAXDRV)
 static int s_drive = 0;
@@ -86,12 +89,93 @@ static void write_be16(uint8_t* p, uint16_t v)
     p[1] = v & 0xFF;
 }
 
-static void write_be32(uint8_t* p, uint32_t v)
+// --- Disk Parameter Block geometry ---
+struct DpbParams {
+    uint16_t spt;  // sectors per track (LOCKED at 32: BIOS READ math is
+                   //   trk*4096 + sec*128, i.e. 32 x 128-byte sectors/track)
+    uint8_t  bsh;  // block shift  (block size = 128 << bsh)
+    uint8_t  blm;  // block mask   ((1<<bsh)-1)
+    uint8_t  exm;  // extent mask
+    uint16_t dsm;  // highest block number (block count - 1)
+    uint16_t drm;  // highest directory entry (entry count - 1)
+    uint8_t  al0;  // directory allocation bitmap, high byte
+    uint8_t  al1;  // directory allocation bitmap, low byte
+    uint16_t cks;  // checksum vector size (0 = fixed disk, no media check)
+    uint16_t off;  // reserved tracks before the directory
+};
+
+// The exact M20 double-sided floppy geometry (bios.c dpb1). This is the
+// format the distribution disk images were created with, so it is
+// reproduced verbatim for floppy-sized images -- deriving a *different*
+// geometry for them would misread their existing directory/allocation.
+static const DpbParams M20_FLOPPY = {32, 4, 15, 1, 134, 63, 0xC0, 0, 16, 3};
+
+// Derive a DPB from an image file's size. Floppy-sized images keep the
+// exact M20 format (above); larger images (hard-disk images) get a scaled
+// geometry whose block size grows with capacity to keep the block count --
+// and thus the allocation vector -- bounded. spt and the reserved-track
+// count stay at the M20 values so the sector-addressing math is unchanged.
+static DpbParams derive_dpb(long image_size)
 {
-    p[0] = (v >> 24) & 0xFF;
-    p[1] = (v >> 16) & 0xFF;
-    p[2] = (v >> 8) & 0xFF;
-    p[3] = v & 0xFF;
+    if (image_size <= 512L * 1024)
+        return M20_FLOPPY;
+
+    DpbParams d{};
+    d.spt = 32;
+    d.off = 3;
+    long track = d.spt * 128;                 // 4096 bytes/track
+    long data  = image_size - d.off * track;  // bytes available for data area
+    if (data < track) data = track;
+
+    // Grow the block size (2K -> 4K -> 8K -> 16K) so the block count stays
+    // within a reasonable allocation-vector size.
+    int bsh = 4;
+    while ((data >> (bsh + 7)) > 8192 && bsh < 7) bsh++;
+    long block   = 1L << (bsh + 7);
+    long nblocks = data / block;
+    if (nblocks > 0x10000) nblocks = 0x10000;
+
+    d.bsh = (uint8_t)bsh;
+    d.blm = (uint8_t)((1 << bsh) - 1);
+    d.dsm = (uint16_t)(nblocks - 1);
+    d.exm = (uint8_t)((d.dsm < 256) ? ((1 << (bsh - 3)) - 1)
+                                    : ((1 << (bsh - 4)) - 1));
+
+    // Directory: ~1 entry per 4K of data, rounded to whole blocks. The
+    // directory allocation bitmap (al0:al1) is only 16 bits, so the
+    // directory can span at most 16 blocks -- cap it there. With bigger
+    // blocks that is still plenty of entries (e.g. 8K blocks -> 4096).
+    long entries = data / 4096;
+    if (entries < 128) entries = 128;
+    long dir_blocks = (entries * 32 + block - 1) / block;
+    if (dir_blocks > 16) dir_blocks = 16;
+    entries = dir_blocks * block / 32;
+    d.drm = (uint16_t)(entries - 1);
+
+    uint16_t albits = 0;                      // top dir_blocks bits set
+    for (long i = 0; i < dir_blocks; i++)
+        albits |= 0x8000 >> i;
+    d.al0 = (uint8_t)(albits >> 8);
+    d.al1 = (uint8_t)(albits & 0xFF);
+
+    d.cks = 0;                                // fixed disk: no media check
+    return d;
+}
+
+// Write an 18-byte CP/M-8000 DPB (all fields big-endian) at p.
+static void write_dpb(uint8_t* p, const DpbParams& d)
+{
+    memset(p, 0, 18);
+    write_be16(p + 0,  d.spt);
+    p[2]  = d.bsh;
+    p[3]  = d.blm;
+    p[4]  = d.exm;
+    write_be16(p + 6,  d.dsm);
+    write_be16(p + 8,  d.drm);
+    p[10] = d.al0;
+    p[11] = d.al1;
+    write_be16(p + 12, d.cks);
+    write_be16(p + 14, d.off);
 }
 
 // --- Disk subsystem initialization ---
@@ -100,73 +184,91 @@ static void write_be32(uint8_t* p, uint32_t v)
 // table. HOST_DIR drives are skipped here (serviced via CpmFileSystem).
 //
 // Layout at base_offset within system segment:
-//   DPB    (18 bytes, shared by all image drives)
-//   DIRBUF (128 bytes, shared)
-//   then, per image drive: DPH (26) + CSV (16) + ALV (32)
+//   DIRBUF (128 bytes, shared by all drives)
+//   then, per present drive: DPB (18) + DPH (16) + CSV (cks) + ALV ((dsm/8)+1)
 //
-// DPH layout (26 bytes, all pointers are 4-byte segmented longs):
-//   0: xltp (4)     - sector translation table (NULL = identity)
-//   4: dphscr (6)   - BDOS scratchpad (3 x int)
-//  10: dirbufp (4)  - directory buffer pointer
-//  14: dpbp (4)     - disk parameter block pointer
-//  18: csvp (4)     - checksum vector pointer
-//  22: alvp (4)     - allocation vector pointer
+// Each drive gets its OWN DPB so an image drive's geometry can be sized to
+// its image file (see derive_dpb). CSV and ALV are sized from that DPB, so a
+// large hard-disk image gets a correspondingly large allocation vector.
+// Host-directory drives use the default M20 floppy geometry (they still need
+// a DPB so SELDSK returns a valid DPH; their file I/O is serviced at the
+// BDOS level by CpmFileSystem, not through this DPB).
+//
+// DPH layout must match `struct dph` in the non-segmented BIOS
+// (src/cpm8k/bios.c): all pointers are 16-bit near pointers (offsets
+// within the system segment), NOT 4-byte segmented longs.
+//   0: xltp (2)     - sector translation table (NULL = identity)
+//   2: dphscr (6)   - BDOS scratchpad (3 x int)
+//   8: dirbufp (2)  - directory buffer pointer
+//  10: dpbp (2)     - disk parameter block pointer
+//  12: csvp (2)     - checksum vector pointer
+//  14: alvp (2)     - allocation vector pointer
 
 uint16_t bios_init_disks(SegmentedMemory& mem, uint16_t base_offset)
 {
     uint8_t* sysbase = mem.data() + PHYS_SYS;
-    uint16_t off = base_offset;
-
-    // --- Shared DPB (M20 dpb1: 280KB double-sided) ---
-    // spt=32, bsh=4, blm=15, exm=1, pad=0, dsm=134, drm=63,
-    // al0=0xC0, al1=0, cks=16, off=3, psh=0, psm=0
-    uint16_t dpb_off = off; off += 18;
-    uint8_t* p = sysbase + dpb_off;
-    memset(p, 0, 18);
-    write_be16(p + 0,  32);    // spt
-    p[2]  = 4;                  // bsh
-    p[3]  = 15;                 // blm
-    p[4]  = 1;                  // exm
-    write_be16(p + 6,  134);   // dsm
-    write_be16(p + 8,  63);    // drm
-    p[10] = 0xC0;               // al0
-    write_be16(p + 12, 16);    // cks
-    write_be16(p + 14, 3);     // off
+    uint16_t off = (base_offset + 1) & ~1;   // keep word alignment
 
     // --- Shared directory buffer ---
     uint16_t dirbuf_off = off; off += 128;
     memset(sysbase + dirbuf_off, 0, 128);
 
-    // --- Per image drive: DPH + CSV + ALV, and open the image file ---
+    // --- Per present drive: DPB + DPH + CSV + ALV ---
+    // Build these for every PRESENT drive -- host directory or image. The
+    // CCP issues a BIOS SELDSK on the drive before loading a program; it must
+    // get a valid (non-zero) DPH back even for host-dir drives, or it reports
+    // "disk select error". Only IMAGE drives get a backing file opened.
     for (int d = 0; d < NUM_DRIVES; d++) {
         s_disk_fp[d] = nullptr;
         s_dph_offset[d] = 0;
-        if (!drive_is_image(d)) continue;
+        if (!drive_present(d)) continue;
 
-        FILE* fp = fopen(drive_path(d).c_str(), "r+b");
-        if (!fp) {
-            fprintf(stderr, "Cannot open image %c: %s\n", 'A' + d, drive_path(d).c_str());
-            continue;
+        FILE* fp = nullptr;
+        DpbParams geo = M20_FLOPPY;
+        if (drive_is_image(d)) {
+            fp = fopen(drive_path(d).c_str(), "r+b");
+            if (!fp) {
+                fprintf(stderr, "Cannot open image %c: %s\n", 'A' + d, drive_path(d).c_str());
+                continue;
+            }
+            fseek(fp, 0, SEEK_END);
+            long sz = ftell(fp);
+            fseek(fp, 0, SEEK_SET);
+            geo = derive_dpb(sz);
         }
 
-        uint16_t dph_off = off; off += 26;
-        uint16_t csv_off = off; off += 16;
-        uint16_t alv_off = off; off += 32;
-        memset(sysbase + dph_off, 0, 26 + 16 + 32);
+        long block = 1L << (geo.bsh + 7);
+        uint16_t csv_len = (geo.cks + 1) & ~1;             // even, word-aligned
+        uint16_t alv_len = ((geo.dsm / 8 + 1) + 1) & ~1;   // even
+
+        uint16_t dpb_off = off; off += 18;
+        uint16_t dph_off = off; off += 16;
+        uint16_t csv_off = off; off += csv_len;
+        uint16_t alv_off = off; off += alv_len;
+
+        write_dpb(sysbase + dpb_off, geo);
+        memset(sysbase + dph_off, 0, 16);
+        memset(sysbase + csv_off, 0, csv_len);
+        memset(sysbase + alv_off, 0, alv_len);
 
         uint8_t* dph = sysbase + dph_off;
-        write_be32(dph + 0,  0);  // xltp = NULL (no sector translation)
-        write_be32(dph + 10, (uint32_t(SYS_SEG) << 16) | dirbuf_off);
-        write_be32(dph + 14, (uint32_t(SYS_SEG) << 16) | dpb_off);
-        write_be32(dph + 18, (uint32_t(SYS_SEG) << 16) | csv_off);
-        write_be32(dph + 22, (uint32_t(SYS_SEG) << 16) | alv_off);
+        write_be16(dph + 0,  0);  // xltp = NULL (no sector translation)
+        write_be16(dph + 8,  dirbuf_off);
+        write_be16(dph + 10, dpb_off);
+        write_be16(dph + 12, csv_off);
+        write_be16(dph + 14, alv_off);
 
-        s_disk_fp[d] = fp;
+        s_disk_fp[d] = fp;          // null for host-dir drives
         s_dph_offset[d] = dph_off;
-        s_num_image_drives++;
+        s_alv_offset[d] = alv_off;
+        s_dpb_offset[d] = dpb_off;
+        s_drive_total_recs[d] = (uint32_t)(geo.dsm + 1) * (uint32_t)(block / 128);
         if (d + 1 > s_max_drive) s_max_drive = d + 1;
+        if (fp) s_num_image_drives++;
         if (g_verbose)
-            fprintf(stderr, "Drive %c: image %s\n", 'A' + d, drive_path(d).c_str());
+            fprintf(stderr, "Drive %c: %-8s %s  (%ldK, %ld-byte blocks, %d dir entries)\n",
+                    'A' + d, fp ? "image" : "host dir", drive_path(d).c_str(),
+                    (long)(geo.dsm + 1) * block / 1024, block, geo.drm + 1);
     }
 
     if (g_verbose)
@@ -174,6 +276,21 @@ uint16_t bios_init_disks(SegmentedMemory& mem, uint16_t base_offset)
                 base_offset, off, s_num_image_drives,
                 s_num_image_drives == 1 ? "" : "s");
     return off;
+}
+
+uint16_t bios_dpb_offset(int drive)
+{
+    return (drive >= 0 && drive < NUM_DRIVES) ? s_dpb_offset[drive] : 0;
+}
+
+uint32_t bios_drive_total_recs(int drive)
+{
+    return (drive >= 0 && drive < NUM_DRIVES) ? s_drive_total_recs[drive] : 0;
+}
+
+uint16_t bios_alv_offset(int drive)
+{
+    return (drive >= 0 && drive < NUM_DRIVES) ? s_alv_offset[drive] : 0;
 }
 
 void bios_cleanup_disks()
@@ -261,7 +378,7 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
         return true;
 
     case BIOS_CONST:
-        cpu.set_reg(7, console_status() ? 0xFF : 0);
+        cpu.set_reg_long(6, console_status() ? 0xFF : 0);
         return true;
 
     case BIOS_CONIN: {
@@ -271,7 +388,7 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
             cpu.request_halt();
             return true;
         }
-        cpu.set_reg(7, ch);
+        cpu.set_reg_long(6, ch);
         return true;
     }
 
@@ -290,7 +407,7 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
         return true;
 
     case BIOS_READER:  // Reader input - return Ctrl-Z (EOF)
-        cpu.set_reg(7, 0x1A);
+        cpu.set_reg_long(6, 0x1A);
         return true;
 
     case BIOS_HOME:
@@ -299,11 +416,12 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
 
     case BIOS_SELDSK: {
         uint8_t drive = p1_lo & 0xFF;
-        if (drive < NUM_DRIVES && s_disk_fp[drive]) {
+        if (drive < NUM_DRIVES && s_dph_offset[drive]) {
             s_drive = drive;
-            cpu.set_reg_long(6, (uint32_t(SYS_SEG) << 16) | s_dph_offset[drive]);
+            // Near pointer within the system segment (struct dph *)
+            cpu.set_reg_long(6, s_dph_offset[drive]);
         } else {
-            cpu.set_reg_long(6, 0);  // invalid drive
+            cpu.set_reg_long(6, 0);  // invalid / unconfigured drive
         }
         return true;
     }
@@ -322,26 +440,26 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
 
     case BIOS_READ: {
         if (s_drive >= NUM_DRIVES || !s_disk_fp[s_drive]) {
-            cpu.set_reg(7, 1);
+            cpu.set_reg_long(6, 1);
             return true;
         }
         long offset = (long)s_track * 4096 + (long)s_sector * 128;
         uint8_t buf[128];
         if (fseek(s_disk_fp[s_drive], offset, SEEK_SET) != 0 ||
             fread(buf, 1, 128, s_disk_fp[s_drive]) != 128) {
-            cpu.set_reg(7, 1);
+            cpu.set_reg_long(6, 1);
             return true;
         }
         // Copy to Z8001 memory at DMA address
         uint32_t phys = mem.translate(s_dma_addr, 0);
         memcpy(mem.data() + phys, buf, 128);
-        cpu.set_reg(7, 0);
+        cpu.set_reg_long(6, 0);
         return true;
     }
 
     case BIOS_WRITE: {
         if (s_drive >= NUM_DRIVES || !s_disk_fp[s_drive]) {
-            cpu.set_reg(7, 1);
+            cpu.set_reg_long(6, 1);
             return true;
         }
         long offset = (long)s_track * 4096 + (long)s_sector * 128;
@@ -351,15 +469,15 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
         memcpy(buf, mem.data() + phys, 128);
         if (fseek(s_disk_fp[s_drive], offset, SEEK_SET) != 0 ||
             fwrite(buf, 1, 128, s_disk_fp[s_drive]) != 128) {
-            cpu.set_reg(7, 1);
+            cpu.set_reg_long(6, 1);
             return true;
         }
-        cpu.set_reg(7, 0);
+        cpu.set_reg_long(6, 0);
         return true;
     }
 
     case BIOS_LISTST:
-        cpu.set_reg(7, 0xFF); // List device always ready
+        cpu.set_reg_long(6, 0xFF); // List device always ready
         return true;
 
     case BIOS_SECTRAN: {
@@ -377,8 +495,16 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
 
     case BIOS_FLUSH:
     case BIOS_FLUSH2:
-        if (s_drive < NUM_DRIVES && s_disk_fp[s_drive])
-            fflush(s_disk_fp[s_drive]);
+        // Commit any buffered writes. The BDOS reads the return as a disk
+        // error code (0 = OK, like WRITE); we MUST set it, or it reads the
+        // stale rr6 and can spuriously report a "disk write error".
+        if (s_drive < NUM_DRIVES && s_disk_fp[s_drive]) {
+            if (fflush(s_disk_fp[s_drive]) != 0) {
+                cpu.set_reg_long(6, 1);
+                return true;
+            }
+        }
+        cpu.set_reg_long(6, 0);
         return true;
 
     case BIOS_GMRTA: {
@@ -394,7 +520,7 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
         return true;
 
     case BIOS_MAXDRV:
-        cpu.set_reg(7, s_max_drive);
+        cpu.set_reg_long(6, s_max_drive);
         return true;
 
     case BIOS_SETXVEC:
@@ -404,7 +530,7 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
 
     default:
         fprintf(stderr, "BIOS: unimplemented function %d\n", func);
-        cpu.set_reg(7, 0);
+        cpu.set_reg_long(6, 0);
         return true;
     }
 }

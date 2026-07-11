@@ -21,3 +21,9 @@ emu_stdout.txt
 
 # Claude settings
 .claude/
+
+# Emulator trace logs (produced by -b/-t)
+bios_trace.log
+sc_trace.log
+sc_trace
+/tmp/

@@ -7,8 +7,6 @@
 #   4. Assemble BIOS and link CP/M-8000 system in bios/z8001/
 #
 # The CP/M-8000 sources in src/cpm8k/ are checked into the repository.
-# To re-extract pristine originals from the distribution disk images,
-# run: make re-extract
 
 AR = z8k-coff-ar
 SRCDIR = src/cpm8k
@@ -17,10 +15,7 @@ BUILDDIR = build
 XARCH = $(BUILDDIR)/tools/xarch
 XOUT2COFF = $(BUILDDIR)/tools/xout2coff
 LIBDIR = $(BUILDDIR)/lib
-DISTDIR = distribution/CPM_8000_1.1
-IMGS = $(wildcard $(DISTDIR)/*.IMG)
-
-.PHONY: all clean tools lib bios bios-emu emu re-extract
+.PHONY: all clean tools lib bios bios-emu emu
 
 all: bios
 
@@ -76,19 +71,3 @@ emu: bios-emu
 
 clean:
 	rm -rf $(BUILDDIR)
-
-# --- Re-extract sources from distribution disk images ---
-# Overwrites src/cpm8k/ with pristine files from the distribution.
-# Requires cpmtools (cpmls, cpmcp).
-re-extract:
-	rm -rf $(SRCDIR)
-	mkdir -p $(SRCDIR)
-	@for img in $(DISTDIR)/*.IMG; do \
-		echo "=== $$(basename $$img) ==="; \
-		cpmls "$$img" | grep -v ':' | while read -r file; do \
-			[ -z "$$file" ] && continue; \
-			echo "  $$file"; \
-			cpmcp "$$img" "0:$$file" "$(SRCDIR)/$$file"; \
-		done; \
-	done
-	@echo "Done. Review changes with: git diff src/cpm8k/"

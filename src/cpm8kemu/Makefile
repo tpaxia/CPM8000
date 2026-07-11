@@ -2,6 +2,10 @@
 
 CXX ?= c++
 CXXFLAGS = -std=c++17 -Wall -Wextra -O2
+# Emit a .d file per object listing its header prerequisites, so editing a
+# header rebuilds every object that includes it (without this, a struct
+# layout change in a shared header silently corrupts objects not rebuilt).
+DEPFLAGS = -MMD -MP
 Z8K_EMU = ../../z8000_emu
 
 # Build output directory
@@ -40,7 +44,10 @@ $(TARGET): dirs $(OBJECTS) $(Z8K_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(OBJECTS) $(Z8K_LIB)
 
 $(BUILDDIR)/%.o: %.cpp | dirs
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c -o $@ $<
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(INCLUDES) -c -o $@ $<
 
 clean:
-	$(RM) -f $(TARGET) $(OBJECTS)
+	$(RM) -f $(TARGET) $(OBJECTS) $(OBJECTS:.o=.d)
+
+# Pull in auto-generated header dependencies (ignored if not yet built).
+-include $(OBJECTS:.o=.d)

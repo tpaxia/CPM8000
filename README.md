@@ -1,7 +1,7 @@
 # CPM8000 — CP/M-8000 for the Olivetti M20
 
 A port of CP/M-8000 to the Olivetti M20 (Z8001-based), built from the
-original Digital Research distribution disk images using GNU cross-tools.
+original Zilog/Digital Research sources using GNU cross-tools.
 
 The BIOS is derived from [4sun5bu/Z8001MB](https://github.com/4sun5bu/Z8001MB),
 adapted for the M20 hardware (different I/O addresses, serial configuration,
@@ -30,28 +30,46 @@ See [PROGRESS.md](PROGRESS.md) for detailed architecture documentation.
 - **z8k-coff binutils** — build GNU Binutils with `--target=z8k-coff`
 - **C++17 compiler** — for the Z8001 emulator and host program
 
-To re-extract sources from the distribution disk images (`make re-extract`):
-- **cpmtools** — `cpmls`, `cpmcp` for extracting files from CP/M disk images
-
 ## Quick start
 
 ```
 make            # builds tools, converts library, assembles BIOS
 make bios-emu   # build thin BIOS + CCP for emulator
 make emu         # build the hosted emulator binary
-build/emu/cpm8k  # run the emulator
+
+# run the emulator (at least one drive must be mapped)
+build/emu/cpm8k -d A=dir:drives/A                  # drive A = host directory
+build/emu/cpm8k -d A=img:distribution/REL11A.IMG   # drive A = CP/M disk image
 ```
 
 All build artifacts go into `build/`.
+
+### Drives
+
+Each drive (`A`..`P`) is mapped independently to either a host directory or a
+CP/M-8000 disk image with `-d X=dir:PATH` or `-d X=img:PATH`; the two backends
+can be mixed in one session, e.g.:
+
+```
+build/emu/cpm8k -d A=img:distribution/REL11A.IMG -d C=dir:drives/C
+```
+
+Drives need not start at `A`. The system boots with the **smallest configured
+drive letter** as the default drive, so `-d B=... -d C=...` comes up at the
+`B>` prompt (not `A>`, which would fail since `A` isn't mapped). Command-line
+order doesn't matter — the lowest letter wins.
+
+Host-directory drives are serviced at the BDOS file level against the host
+filesystem; image drives run the real CP/M-8000 BDOS doing sector I/O against
+the image file. See [PROGRESS.md](PROGRESS.md) for the current status of each
+backend and the debug/trace flags (`-b`, `-t`, `-r`, `-m`, `-v`).
 
 ## Project structure
 
 ```
 CPM8000/
-  distribution/
-    CPM_8000_1.1/     CP/M-8000 1.1 disk images (4 x .IMG)
   src/
-    cpm8k/            CP/M-8000 sources (originally extracted from disk images)
+    cpm8k/            CP/M-8000 sources from Zilog product distribution
     cpm8kemu/         hosted emulator (C++17, runs on macOS/Linux)
     xoututils/        C tools to convert Zilog x.out format to Z8k-COFF
   z8000_emu/          Z8001 CPU emulator library
@@ -88,15 +106,14 @@ The top-level `make` runs these steps in order:
 | `make bios-emu` | Assemble thin BIOS for emulator |
 | `make emu` | Build the hosted emulator binary |
 | `make clean` | Remove `build/` |
-| `make re-extract` | Re-extract pristine `src/cpm8k/` from distribution images |
 
 ## CP/M-8000 sources
 
-The `src/cpm8k/` directory contains the CP/M-8000 system files, originally
-extracted from the distribution disk images in `distribution/CPM_8000_1.1/`.
-These files are checked into the repository and may contain modifications.
-To re-extract pristine originals, run `make re-extract` and review changes
-with `git diff src/cpm8k/`.
+The `src/cpm8k/` directory contains the CP/M-8000 system files from the
+Zilog CP/M-8000 1.1 product distribution disk. The assembler predef
+(`asz8k.pd`) has been corrected to fix the FMSKEL2 flag values (the
+product disk had shifted flag bits that caused LDM/LDIR/LDIRB instructions
+to be assembled incorrectly).
 
 ## xoututils
 

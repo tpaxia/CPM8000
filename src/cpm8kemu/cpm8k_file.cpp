@@ -10,7 +10,7 @@
 static constexpr uint8_t TPA_SEG = 0x0A;
 
 CpmFileSystem::CpmFileSystem(SegmentedMemory& mem)
-    : m_mem(mem), m_current_drive(0), m_user(0),
+    : m_mem(mem), m_current_drive(0), m_default_drive(0), m_user(0),
       m_dma_addr((uint32_t(TPA_SEG) << 16) | 0x0080),
       m_caller_seg(TPA_SEG), m_ro_vec(0)
 {
@@ -405,6 +405,11 @@ int CpmFileSystem::file_search_first(uint16_t fcb_addr)
     }
 
     read_fcb_name(fcb_addr, m_search.search_name);
+    // Drive code '?' matches every directory entry regardless of the FCB
+    // name field (CP/M convention; STAT enumerates the directory this way
+    // and filters the names itself).
+    if (match_any_user)
+        memset(m_search.search_name, '?', 11);
     m_search.search_drive = drive;
     m_search.active = true;
     m_search.entry_index = 0;
@@ -703,7 +708,7 @@ void CpmFileSystem::set_drive_ro(int drive)
 
 void CpmFileSystem::reset_all_drives()
 {
-    m_current_drive = 0;
+    m_current_drive = m_default_drive;
     m_ro_vec = 0; // Clear read-only flags (matching real BDOS)
     // Real BDOS does NOT reset DMA address on func 13
 }
