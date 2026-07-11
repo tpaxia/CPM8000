@@ -1,0 +1,5 @@
+; build a bios with floating point emulation NOTE biosboot.o is loaded 1st
+zcc -c -M1 bios.c
+asz8k -o biosasm.o biosasm.8kn
+ld8k -o bios.rel -r biosasm.o bios.o fpedep.o fpe.o
+ar8k qv bios.a bios.rel biosasm.o bios.o fpedep.o fpe.o

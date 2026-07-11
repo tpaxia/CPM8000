@@ -1,0 +1,5 @@
+; build cpm.sys: link the from-source bios.rel with the CCP+BDOS (cpmsys.rel)
+zcc -c -M1 bios.c
+asz8k -o biosasm.o biosasm.8kn
+ld8k -o bios.rel -r biosasm.o bios.o fpedep.o fpe.o
+ld8k -w -o cpm.sys bios.rel cpmsys.rel -lcpm
