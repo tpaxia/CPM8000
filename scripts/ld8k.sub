@@ -1,0 +1,3 @@
+; build the ld8k linker from source (output to _ld8k.z8k, not the running ld8k)
+zcc -c -M1 ld8k.c
+ld8k -w -i -o _ld8k.z8k startup.o ld8k.o -lcpm
