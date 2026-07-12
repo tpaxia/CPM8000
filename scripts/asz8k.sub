@@ -1,0 +1,23 @@
+; build the asz8k assembler from source (src/asm8k)
+zcc -c -M1 aascom.c
+zcc -c -M1 chain.c
+zcc -c -M1 asz8k.c
+zcc -c -M1 asz8kglo.c
+zcc -c -M1 asz8kgrm.c
+zcc -c -M1 aparse.c
+zcc -c -M1 atoken.c
+zcc -c -M1 ainput.c
+zcc -c -M1 ainit.c
+zcc -c -M1 adirec.c
+zcc -c -M1 aglocom.c
+zcc -c -M1 alook.c
+zcc -c -M1 avm.c
+zcc -c -M1 amisc.c
+zcc -c -M1 axref.c
+zcc -c -M1 aoutput.c
+era asz8k.a
+ar8k qv asz8k.a asz8k.o asz8kglo.o asz8kgrm.o aparse.o
+ar8k qv asz8k.a atoken.o ainput.o ainit.o adirec.o
+ar8k qv asz8k.a aglocom.o alook.o avm.o amisc.o
+ar8k qv asz8k.a axref.o aoutput.o
+ld8k -w -i -s -o _asz8k.z8k startup.o aascom.o chain.o asz8k.a asz8k.a -lcpm
