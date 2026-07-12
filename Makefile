@@ -15,9 +15,20 @@ BUILDDIR = build
 XARCH = $(BUILDDIR)/tools/xarch
 XOUT2COFF = $(BUILDDIR)/tools/xout2coff
 LIBDIR = $(BUILDDIR)/lib
-.PHONY: all clean tools lib bios bios-emu emu
+.PHONY: all clean tools lib bios bios-emu emu regenerate overlay cpm8k-src
 
 all: bios
+
+# --- Regenerate the CP/M-8000 source tree from the distribution images ---
+# Two auditable steps: (1) extract pristine files from the M20 disk images,
+# (2) overlay the from-source linker. cpm8k-src runs both.
+regenerate:
+	scripts/regenerate-cpm8k.sh $(SRCDIR)
+
+overlay:
+	scripts/overlay-cpm8k.sh $(SRCDIR)
+
+cpm8k-src: regenerate overlay
 
 # --- Build host tools ---
 tools: $(XARCH) $(XOUT2COFF)

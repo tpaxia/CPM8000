@@ -137,6 +137,34 @@ instructions, so `asz8k` silently emitted `LDM`/`LDIR`/`LDIRB` (and the
 block/string ops) as truncated 2-byte instructions instead of 4-byte. That
 corrupt predef has been replaced with the correct distribution version.
 
+### Provenance: regenerating `src/cpm8k`
+
+`src/cpm8k/` is not hand-maintained — it is *regenerated* from the pristine
+distribution disk images in two auditable steps, so exactly what deviates from
+the shipped product is explicit:
+
+```
+make regenerate   # step 1: extract the 75 pristine files from the six M20
+                  #         images (distribution/CPM_8000_1.1/*.IMG) with
+                  #         cpmtools + src/diskdefs_m20.mame
+make overlay      # step 2: drop in the one deviation the build needs --
+                  #         the from-source linker src/linker/ld8k.z8k
+make cpm8k-src    # both steps
+```
+
+The **pristine images are the untouched ground truth**; the **overlay is the
+sole deviation**. That deviation is only the linker: the shipped `ld8k` works
+for `-w` final links but fails `-r` relocatable links in the emulator
+("p2 can't open <obj>"), so the overlay supplies the from-source rebuild
+(`src/linker/ld8k.z8k`, a build-once stable binary — rebuild it with
+`scripts/build-ld8k.sh` when `src/linker/ld8k.c` changes). The assembler predef
+`asz8k.pd` is pristine (it matches the image; not a deviation).
+
+Regenerating drops two files that were never on any distribution disk
+(`bdos.h`, a stray header used only by the unbuilt `putboot.c`; and
+`tmptic.z8k`, a temp build artifact). Building from the regenerated tree
+reproduces `bios.rel`, `cpm.sys`, and `cpmldr.sys` **byte-identical**.
+
 ### Building the BIOS from source (in the emulator)
 
 `scripts/build-bios.sh` rebuilds the M20 BIOS from these sources using the

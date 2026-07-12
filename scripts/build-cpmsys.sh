@@ -16,7 +16,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 EMU=build/emu/cpm8k
-SRC=src/cpm8k
+SRC=${SRC:-src/cpm8k}
 SUB=scripts/cpmsys.sub
 OUT=${1:-build/bios-src}
 

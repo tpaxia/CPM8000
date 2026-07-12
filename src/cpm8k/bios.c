@@ -780,8 +780,7 @@ struct dph
 	int	 dphscr[3];	/* scratchpad for BDOS			*/
 	char	*dirbufp;	/* -> directory buffer (128 bytes)	*/
 struct	dpb	*dpbp;		/* -> disk parameter block		*/
-	char	*csvp;
-	/* -> software check vector (cks bytes)	*/
+	char	*csvp;		/* -> software check vector (cks bytes)	*/
 	char	*alvp;		/* -> alloc vector ((dsm/8)+1 bytes)	*/
 };
 
