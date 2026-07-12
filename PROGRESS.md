@@ -486,10 +486,42 @@ Caveat -- the DISTRIBUTION linker binary is buggy: the `ld8k.z8k` shipped in
 `src/cpm8k` (Linker "V1.01j", 28416 bytes) fails its own pass-1->pass-2
 transition ("p2 can't open <obj>", even on a single object, no OS call). This
 is a bug in that binary, NOT the emulator: a linker rebuilt from source
-(`drives/LINK/ld8k.c` -> `ld8k.z8k`, 29310 bytes) links the same objects
-correctly. `src/cpm8k/ld8k.z8k` has been replaced with that from-source
-build, so the source build is reproducible (`drives/LINK/LINK.SUB` rebuilds
-`ld8k`/`ar8k`/`xcon`/`xdump` from their `.c` sources).
+(`src/linker/ld8k.c`) links the same objects correctly. `src/cpm8k/ld8k.z8k`
+has been replaced with that from-source build, reproducible via
+`scripts/build-ld8k.sh`.
+
+### Loader (cpmldr.sys) from source
+The M20 CP/M loader builds from source with `src/cpm8k/makeldr.sub`:
+`zcc -c -M1 -Dloader bios.c`, `asz8k lbiosasm.8kn` (which sets `LOADER .equ 1`
+and `.input`s the same `.8kn` set as the normal BIOS), `ld8k -r` into
+`cpmldr.rel`, then `ld8k -s ... -lcpm` into `cpmldr.sys`. Staging those inputs
+plus the toolchain into a temp C: drive and SUBMITting `makeldr.sub` produces
+a working loader.
+
+**-D actually works.** `src/cpm8k/readme` (12/19/84) warns that "the -D option
+no longer works" and that the `loader` define must be set to 1 at the top of
+`bios.c` -- but that note predates the compiler actually shipped here
+(zcc v1.01e 12/26/84, a week newer), which honors `-D`. Verified directly:
+`zcc -c -M1 bios.c` yields a 5376-byte object, while both `-Dloader` and
+`-DLOADER` yield an identical 4224-byte loader object (the CCP uppercases the
+command tail, and the define matches case-insensitively). So `makeldr.sub` as
+written builds the real loader BIOS, not the normal one.
+
+The from-source loader is **not** byte-identical to the shipped `cpmldr.sys`,
+and cannot be made so in the emulator, for two independent reasons:
+- `cpmldr.sys` is a final (`-s`, `-lcpm`) link -- the `-w` path where the
+  rebuilt ld8k's symbol-table fix applies -- so it intentionally emits the
+  corrected local-symbol bytes the distribution's buggy linker did not.
+- `cpmldr.rel` is a `-r` link (fixes gated off) yet still differs, by a
+  data-segment *size* (`0x0e00` vs `0x0d1a`, +230 B). Since the rebuilt ld8k's
+  `-r` output is byte-identical to the original's (that is why `bios.rel`
+  reproduces the distribution exactly), a size difference means the *inputs*
+  differ: the shipped `cpmldr` is an older object snapshot, not reproducible
+  from the current sources.
+
+The original distribution ld8k can't be used to cross-check this in the
+emulator -- it fails its pass-1->pass-2 handoff ("p2 can't open ...", see the
+ld8k caveat above). There is no committed build target for the loader yet.
 
 ### Host-dir parity fixes (image drives exposed these)
 - `fcb_drive` now treats FCB drive byte `'?'` (0x3F, "any user") as the
