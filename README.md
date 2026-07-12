@@ -137,6 +137,66 @@ instructions, so `asz8k` silently emitted `LDM`/`LDIR`/`LDIRB` (and the
 block/string ops) as truncated 2-byte instructions instead of 4-byte. That
 corrupt predef has been replaced with the correct distribution version.
 
+### Building the BIOS from source (in the emulator)
+
+`scripts/build-bios.sh` rebuilds the M20 BIOS from these sources using the
+original DR/Zilog toolchain *running inside the emulator* (`zcc`, `asz8k` →
+`xcon`, `ld8k`, `ar8k`). It stages the sources and toolchain into a fresh
+temporary directory, mounts it as drive `C:`, runs `scripts/bios.sub`, and
+copies the results out:
+
+```
+make emu bios-emu          # build the emulator + its cpm.sys once
+scripts/build-bios.sh      # -> build/bios-src/bios.rel, bios.a
+```
+
+The result is byte-identical to the distribution's prebuilt `bios.rel`.
+`scripts/build-cpmsys.sh` goes one step further and links `bios.rel` with
+the CCP+BDOS (`cpmsys.rel`) and `libcpm.a` into `cpm.sys`; its code segment
+is byte-identical to the distribution's `cpm.sys`.
+
+## Linker (ld8k) and the symbol-table fix
+
+The linker source lives in `src/linker/` (`ld8k.c` plus its headers) and is
+rebuilt from source with `scripts/build-ld8k.sh` (a bootstrap build inside
+the emulator). Two points of provenance are worth recording:
+
+- The `ld8k.z8k` shipped in the distribution is **V1.01j**, an *earlier*
+  linker than the one that actually built the distribution. It links, but
+  produces a divergent `cpm.sys` (~49 KB, different segment layout). The
+  linker that reproduces the distribution's code is a later (V1.6-class)
+  linker, which is what `src/linker/ld8k.c` builds — it yields a `cpm.sys`
+  whose code segment and every global/absolute symbol are byte-identical to
+  the distribution.
+
+`ld8k.c` had two bugs in its **symbol-table** (debug) output. Both are in the
+final (`-w`) link path only and are gated on `!saverel`, so relocatable
+(`-r`) links — and therefore `bios.rel` — stay byte-identical to the
+distribution:
+
+1. **Absolute symbols** (segment 255) were relocated through an out-of-bounds
+   `segtab[255]` read (`SEGNO` is 128), adding garbage (`0x358`) to every
+   absolute symbol value.
+2. **Local (debug) symbols** were not relocated like globals across modules,
+   leaving them under-relocated in multi-module links.
+
+The correct model was confirmed against Digital Research's own debugger: the
+CP/M-68K DDT sources (`disas.h`) define the symbol flags `SYEQ` (equated /
+absolute), `SYTX`/`SYDA`/`SYBS` (text/data/bss-relative) and `SYGL` (global).
+The relocation basis is **per-segment and orthogonal to the global/local
+binding** — a text-relative symbol is relocated by the text base whether it
+is global or local, and equated symbols are never relocated. The Z8000 x.out
+format is the same design with a different entry layout (a `seg` byte plus a
+`type` byte instead of one flag word).
+
+Under that model the fixed linker is correct and the **distribution's own
+local symbols are wrong**: e.g. the text-relative local `Fsub10` must carry
+its offset in the text segment (`0x0062`, where the byte-identical code
+places it), which the fixed linker emits, but the distribution stored
+`0x0b9c`. These are debug-only symbols — the relocation table is empty in a
+fully-linked `cpm.sys` and the loader never reads the symbol table — so the
+difference never affected the running system, only symbolic debugging.
+
 ## xoututils
 
 The `src/xoututils/` directory contains C tools for working with the Zilog
