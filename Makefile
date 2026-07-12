@@ -4,7 +4,7 @@
 #   1. Build host tools (xarch, xout2coff) in src/xoututils/
 #   2. Extract and convert libcpm.a from x.out to COFF in build/lib/
 #   3. Convert standalone x.out objects (fpe.o, fpedep.o, cpmsys.o)
-#   4. Assemble BIOS and link CP/M-8000 system in bios/z8001/
+#   4. Assemble BIOS and link CP/M-8000 system in src/bios/z8001/
 #
 # The CP/M-8000 sources in src/cpm8k/ are checked into the repository.
 
@@ -59,11 +59,11 @@ lib: $(LIBDIR)/libcpm.a $(LIBDIR)/fpe.o $(LIBDIR)/fpedep.o $(LIBDIR)/cpmsys.o
 
 # --- Build BIOS and link CP/M-8000 system ---
 bios: lib
-	$(MAKE) -C bios/z8001 BUILDDIR=$(abspath $(BUILDDIR)/bios) LIBDIR=$(abspath $(LIBDIR))
+	$(MAKE) -C src/bios/z8001 BUILDDIR=$(abspath $(BUILDDIR)/bios) LIBDIR=$(abspath $(LIBDIR))
 
 # --- Build thin BIOS for emulator ---
 bios-emu: lib
-	$(MAKE) -C bios/emu BUILDDIR=$(abspath $(BUILDDIR)/bios-emu) LIBDIR=$(abspath $(LIBDIR))
+	$(MAKE) -C src/bios/emu BUILDDIR=$(abspath $(BUILDDIR)/bios-emu) LIBDIR=$(abspath $(LIBDIR))
 
 # --- Build emulator host program ---
 emu: bios-emu

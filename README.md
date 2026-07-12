@@ -10,20 +10,20 @@ sources, with the goal of rebuilding the BIOS and utilities from source
 using the original DR/Zilog toolchain (C compiler, assembler, linker)
 running inside the emulator.
 
-`bios/` holds three separate BIOSes:
+There are three separate BIOSes, all with sources under `src/`:
 
-- **`bios/emu/`** — a thin BIOS written for the emulator (bootstrap + trap
+- **`src/bios/emu/`** — a thin BIOS written for the emulator (bootstrap + trap
   handler); it dispatches BDOS/BIOS calls to host services rather than
   emulating hardware. This is the BIOS the emulator runs.
-- **`bios/M20/`** (sources also in `src/cpm8k/`) — the original Digital
-  Research / Olivetti M20 CP/M-8000 BIOS (`bios.c` plus `.8kn` assembly),
-  from the distribution disks. This is what the from-source build produces.
-- **`bios/z8001/`** — a BIOS for real Z8001 hardware (the CPM8000 board).
+- **`src/cpm8k/`** — the original Digital Research / Olivetti M20 CP/M-8000
+  BIOS (`bios.c` plus `.8kn` assembly), from the distribution disks. This is
+  what the from-source build produces.
+- **`src/bios/z8001/`** — a BIOS for real Z8001 hardware (the CPM8000 board).
   It is essentially 4sun5bu's [Z8001MB](https://github.com/4sun5bu/Z8001MB)
   BIOS (MIT) — the BIOS dispatch and memory configuration are Z8001MB's —
   with the system origin, I/O port addresses, and serial/IDE config changed
   for the board. It is *not* the Olivetti M20 BIOS; see
-  `bios/z8001/README.md` and `CHANGES.md`.
+  `src/bios/z8001/README.md` and `CHANGES.md`.
 
 ## Emulator
 
@@ -91,10 +91,10 @@ CPM8000/
     cpm8k/            CP/M-8000 sources from Zilog product distribution
     cpm8kemu/         hosted emulator (C++17, runs on macOS/Linux)
     xoututils/        C tools to convert Zilog x.out format to Z8k-COFF
+    bios/
+      z8001/          BIOS for real hardware (adapted from 4sun5bu/Z8001MB)
+      emu/            thin BIOS for the emulator (assembly)
   z8000_emu/          Z8001 CPU emulator library
-  bios/
-    z8001/            BIOS for real hardware (adapted from 4sun5bu/Z8001MB)
-    emu/              thin BIOS for the emulator (assembly)
   build/              all build output (created by make)
   Makefile            top-level build pipeline
   LICENSE             BSD 2-Clause
@@ -110,7 +110,7 @@ The top-level `make` runs these steps in order:
    with `z8k-coff-ar`
 3. **Convert objects** — converts `fpe.o`, `fpedep.o`, and `cpmsys.o` from
    x.out to COFF
-4. **Assemble BIOS** — assembles all `.s` files in `bios/z8001/` with `z8k-coff-as`
+4. **Assemble BIOS** — assembles all `.s` files in `src/bios/z8001/` with `z8k-coff-as`
 5. **Link** — links BIOS objects, `cpmsys.o`, and `-lcpm` into `cpm8k` COFF,
    then strips to raw binary `cpm8k.bin`
 
@@ -211,12 +211,12 @@ These are a C port of the Go tools by 4sun5bu
 
 ## BIOS
 
-The `bios/z8001/` directory is 4sun5bu's Z8001MB BIOS adapted for the
+The `src/bios/z8001/` directory is 4sun5bu's Z8001MB BIOS adapted for the
 CPM8000 board — a Z8001MB-based design. The BIOS dispatch and memory
 mapping come straight from Z8001MB (`bios.s`, `biosmem.s`, etc. are
 unchanged); the changes are the system origin, I/O port addresses, and
-serial/IDE configuration. See `bios/z8001/CHANGES.md` for the summary and
-`bios/z8001/z8001mb-to-m20.patch` for the full diff. This is **not** the
+serial/IDE configuration. See `src/bios/z8001/CHANGES.md` for the summary and
+`src/bios/z8001/z8001mb-to-m20.patch` for the full diff. This is **not** the
 original Olivetti M20 BIOS — those sources are in `src/cpm8k/`.
 
 ## Acknowledgments

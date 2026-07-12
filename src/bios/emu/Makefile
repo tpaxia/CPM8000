@@ -6,8 +6,8 @@ LD = z8k-coff-ld
 OBJCOPY = z8k-coff-objcopy
 
 # Build output and library directories (overridden by top-level Makefile)
-BUILDDIR ?= ../../build/bios-emu
-LIBDIR ?= ../../build/lib
+BUILDDIR ?= ../../../build/bios-emu
+LIBDIR ?= ../../../build/lib
 
 SRC_OBJS = biosboot.o biostrap.o
 
