@@ -41,6 +41,17 @@ trap 'rm -rf "$DRIVE"' EXIT INT TERM
 
 echo "staging build inputs into temp drive: $DRIVE"
 for f in $SOURCES $TOOLS; do cp "$SRC/$f" "$DRIVE/"; done
+
+# Optional BIOS overlay: a package dir (e.g. src/bios/<name>) supplies the
+# BIOS-specific sources (.c/.8kn) that override or add to the stock M20 set --
+# the same overlay idea as regenerate+overlay for src/cpm8k. For the stock M20
+# BIOS the overlay is empty, so this is a no-op.
+if [ -n "${BIOS_OVERLAY:-}" ]; then
+	echo "overlaying BIOS sources from: $BIOS_OVERLAY"
+	for f in "$BIOS_OVERLAY"/*.8kn "$BIOS_OVERLAY"/*.c; do
+		[ -f "$f" ] && cp "$f" "$DRIVE/"
+	done
+fi
 cp "$SUB" "$DRIVE/BIOS.SUB"
 
 echo "building (drive C: -> $DRIVE) ..."

@@ -1,0 +1,2 @@
+; classic final link: BIOS object + CCP/BDOS (cpmsys.rel) + C library -> cpm.sys
+ld8k -w -o cpm.sys bios.rel cpmsys.rel -lcpm

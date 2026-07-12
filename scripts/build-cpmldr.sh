@@ -35,24 +35,36 @@ OUT=${1:-build/ldr-src}
 [ -f build/bios-emu/cpm.sys ] || { echo "error: build/bios-emu/cpm.sys missing -- run 'make bios-emu' first" >&2; exit 1; }
 
 # Sources makeldr.sub needs. lbiosasm.8kn (LOADER .equ 1) pulls in the same
-# .8kn set as the normal BIOS via `.input`, so those must be present too.
-# ldrbdos.rel is the prebuilt loader BDOS. asz8k.pd is the assembler predef.
-SOURCES="bios.c lbiosasm.8kn \
-         biosdefs.8kn biosboot.8kn biosif.8kn biosio.8kn \
-         biosmem.8kn biostrap.8kn syscall.8kn \
-         ldrbdos.rel asz8k.pd"
+# Loader BIOS sources (stock, from SRC). lbiosasm.8kn (LOADER .equ 1) .inputs
+# the same .8kn set as the normal BIOS, so those must be present too.
+BIOS_FILES="bios.c lbiosasm.8kn \
+            biosdefs.8kn biosboot.8kn biosif.8kn biosio.8kn \
+            biosmem.8kn biostrap.8kn syscall.8kn"
+
+# BIOS-independent substrate (from SRC): ldrbdos.rel (loader BDOS), the
+# assembler predef, and libcpm.a.
+SUBSTRATE="ldrbdos.rel asz8k.pd libcpm.a"
 
 # In-guest toolchain. asz8k chains to xcon (.OBJ -> .o); zcc chains to
 # zcc1/zcc2/zcc3. makeldr.sub also invokes ar8k, pip and putboot.
 TOOLS="zcc.z8k zcc1.z8k zcc2.z8k zcc3.z8k \
-       asz8k.z8k xcon.z8k ld8k.z8k ar8k.z8k pip.z8k putboot.z8k libcpm.a"
+       asz8k.z8k xcon.z8k ld8k.z8k ar8k.z8k pip.z8k putboot.z8k"
 
 # Fresh temporary drive directory, removed on exit.
 DRIVE=$(mktemp -d "${TMPDIR:-/tmp}/cpm8k-cpmldr.XXXXXX")
 trap 'rm -rf "$DRIVE"' EXIT INT TERM
 
 echo "staging build inputs into temp drive: $DRIVE"
-for f in $SOURCES $TOOLS; do cp "$SRC/$f" "$DRIVE/"; done
+for f in $BIOS_FILES $SUBSTRATE $TOOLS; do cp "$SRC/$f" "$DRIVE/"; done
+
+# Optional BIOS overlay: a package dir (src/bios/<name>) supplies BIOS-specific
+# sources (.c/.8kn) overriding/adding to the stock set. Empty for stock M20.
+if [ -n "${BIOS_OVERLAY:-}" ]; then
+	echo "overlaying BIOS sources from: $BIOS_OVERLAY"
+	for f in "$BIOS_OVERLAY"/*.8kn "$BIOS_OVERLAY"/*.c; do
+		[ -f "$f" ] && cp "$f" "$DRIVE/"
+	done
+fi
 cp "$SUB" "$DRIVE/MAKELDR.SUB"
 
 echo "building (drive C: -> $DRIVE) ..."

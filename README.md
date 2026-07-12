@@ -10,20 +10,23 @@ sources, with the goal of rebuilding the BIOS and utilities from source
 using the original DR/Zilog toolchain (C compiler, assembler, linker)
 running inside the emulator.
 
-There are three separate BIOSes, all with sources under `src/`:
+There are two kinds of BIOS.
 
-- **`src/bios/emu/`** — a thin BIOS written for the emulator (bootstrap + trap
-  handler); it dispatches BDOS/BIOS calls to host services rather than
-  emulating hardware. This is the BIOS the emulator runs.
-- **`src/cpm8k/`** — the original Digital Research / Olivetti M20 CP/M-8000
-  BIOS (`bios.c` plus `.8kn` assembly), from the distribution disks. This is
-  what the from-source build produces.
-- **`src/bios/z8001/`** — a BIOS for real Z8001 hardware (the CPM8000 board).
-  It is essentially 4sun5bu's [Z8001MB](https://github.com/4sun5bu/Z8001MB)
-  BIOS (MIT) — the BIOS dispatch and memory configuration are Z8001MB's —
-  with the system origin, I/O port addresses, and serial/IDE config changed
-  for the board. It is *not* the Olivetti M20 BIOS; see
-  `src/bios/z8001/README.md` and `CHANGES.md`.
+**Emulator infrastructure** (not a sysgen target):
+
+- **`src/cpm8kemu/bios/`** — a thin BIOS written for the emulator (bootstrap +
+  trap handler); it dispatches BDOS/BIOS calls to host services rather than
+  emulating hardware. Built by `make bios-emu`; this is the BIOS the emulator
+  runs.
+
+**Pluggable BIOSes** under `src/bios/` — each is a package with a `Makefile`
+that `sysgen` builds into a bootable system (see [System generation](#system-generation-sysgen)):
+
+- **`src/bios/m20/`** — the M20 reference BIOS, built with the in-emulator
+  DR/Zilog toolchain (`zcc`, `asz8k`, `ld8k`). An *overlay* package: the BIOS
+  sources come from the stock M20 tree (`src/cpm8k/` — `bios.c` plus `.8kn`
+  assembly, from the distribution disks); the package overlays only the files
+  it changes (nothing, for the stock reference).
 
 ## Emulator
 
@@ -90,41 +93,79 @@ CPM8000/
   src/
     cpm8k/            CP/M-8000 sources from Zilog product distribution
     cpm8kemu/         hosted emulator (C++17, runs on macOS/Linux)
+      bios/           thin BIOS for the emulator (assembly) -- infrastructure
     xoututils/        C tools to convert Zilog x.out format to Z8k-COFF
-    bios/
-      z8001/          BIOS for real hardware (adapted from 4sun5bu/Z8001MB)
-      emu/            thin BIOS for the emulator (assembly)
+    linker/           ld8k linker source (+ committed overlay binary)
+    bios/             pluggable BIOSes (each a Makefile package)
+      m20/            M20 reference BIOS (overlay on src/cpm8k)
   z8000_emu/          Z8001 CPU emulator library
-  build/              all build output (created by make)
+  build/
+    system/<name>/    generated systems (cpm.sys [, cpmldr.sys]) from sysgen
+    ...               other build output (created by make)
   Makefile            top-level build pipeline
   LICENSE             BSD 2-Clause
 ```
 
 ## Build pipeline
 
-The top-level `make` runs these steps in order:
+The top-level `make` builds the emulator, in these steps:
 
 1. **Build tools** — compiles `xarch` and `xout2coff` in `src/xoututils/`
-2. **Convert library** — extracts 129 members from the Zilog x.out `libcpm.a`,
+2. **Convert library** — extracts the members from the Zilog x.out `libcpm.a`,
    converts each to Z8k-COFF, and packs them into a new `build/lib/libcpm.a`
    with `z8k-coff-ar`
-3. **Convert objects** — converts `fpe.o`, `fpedep.o`, and `cpmsys.o` from
-   x.out to COFF
-4. **Assemble BIOS** — assembles all `.s` files in `src/bios/z8001/` with `z8k-coff-as`
-5. **Link** — links BIOS objects, `cpmsys.o`, and `-lcpm` into `cpm8k` COFF,
-   then strips to raw binary `cpm8k.bin`
+3. **Convert object** — converts the CCP+BDOS object `cpmsys.o` from x.out to COFF
+4. **Assemble the emulator BIOS** — assembles the thin BIOS in
+   `src/cpm8kemu/bios/` and links `build/bios-emu/cpm.sys`
+5. **Build the emulator** — compiles the host program in `src/cpm8kemu/`
+
+Bootable CP/M-8000 systems are then generated with `make system` (see below).
 
 ### Make targets
 
 | Target | Description |
 |--------|-------------|
-| `make` | Full build (convert + assemble + link) |
+| `make` | Build the emulator (tools + lib + BIOS + host) |
 | `make tools` | Build xoututils only |
-| `make lib` | Convert library and objects only |
-| `make bios` | Assemble and link BIOS (real hardware) |
+| `make lib` | Convert library and object only |
 | `make bios-emu` | Assemble thin BIOS for emulator |
 | `make emu` | Build the hosted emulator binary |
+| `make system NAME=<n>` | Generate a bootable system for a BIOS (see below) |
+| `make regenerate` / `overlay` / `cpm8k-src` | Regenerate `src/cpm8k` from the images (+ overlay) |
 | `make clean` | Remove `build/` |
+
+## System generation (sysgen)
+
+`sysgen` turns a **BIOS** into a bootable CP/M-8000 system. A BIOS is a
+directory under `src/bios/` containing a `Makefile` (a "BIOS package"); that's
+the whole recognition contract. `sysgen` runs the package's Makefile to build
+the BIOS object, then does the final system link into `build/system/<name>/`.
+
+```
+make emu bios-emu                 # one-time: build the emulator + its cpm.sys
+make system NAME=m20              # -> build/system/m20/cpm.sys
+make system NAME=m20 LOADER=1     # -> also build/system/m20/cpmldr.sys
+make system NAME=foo BIOS=src/bios/foo   # explicit BIOS dir
+```
+
+The BIOS is built with the in-emulator DR/Zilog toolchain (`zcc`, `asz8k`,
+`ld8k`), producing x.out objects.
+
+**The BIOS-package contract** (see `src/bios/m20/Makefile`):
+
+- `make -C src/bios/<name> bios.rel BUILDDIR=<dir>` builds the BIOS object.
+- A package is an **overlay**: BIOS sources come from the stock M20 tree
+  (`src/cpm8k`), and the package overlays only the `.c`/`.8kn` files it changes
+  — the same overlay idea as regenerating `src/cpm8k`. The stock M20 reference
+  has an empty overlay.
+
+**To bring up a custom board:** copy `src/bios/m20/` to `src/bios/<board>/`,
+drop in your changed `.c`/`.8kn` (and edit `biosasm.8kn`'s `.input` list if you
+add files), then `make system NAME=<board>`.
+
+The `cpm.sys` final link (`bios.rel` + `cpmsys.rel` + `libcpm.a` via `ld8k`)
+lives in `scripts/link-cpmsys.sh`; the optional loader is built by
+`scripts/build-cpmldr.sh`.
 
 ## CP/M-8000 sources
 
@@ -237,20 +278,9 @@ x.out object file format used by CP/M-8000:
 These are a C port of the Go tools by 4sun5bu
 ([xoututils](https://github.com/4sun5bu/xoututils), MIT license).
 
-## BIOS
-
-The `src/bios/z8001/` directory is 4sun5bu's Z8001MB BIOS adapted for the
-CPM8000 board — a Z8001MB-based design. The BIOS dispatch and memory
-mapping come straight from Z8001MB (`bios.s`, `biosmem.s`, etc. are
-unchanged); the changes are the system origin, I/O port addresses, and
-serial/IDE configuration. See `src/bios/z8001/CHANGES.md` for the summary and
-`src/bios/z8001/z8001mb-to-m20.patch` for the full diff. This is **not** the
-original Olivetti M20 BIOS — those sources are in `src/cpm8k/`.
-
 ## Acknowledgments
 
-- **4sun5bu** — original [Z8001MB](https://github.com/4sun5bu/Z8001MB) BIOS
-  and [xoututils](https://github.com/4sun5bu/xoututils) (MIT license)
+- **4sun5bu** — [xoututils](https://github.com/4sun5bu/xoututils) (MIT license)
 - **Digital Research** — CP/M-8000 1.1, licensed by Lineo, Inc.
   (see [The Unofficial CP/M Web Site](http://www.cpm.z80.de/))
 

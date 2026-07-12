@@ -23,14 +23,14 @@ OUT=${1:-build/bios-src}
 [ -x "$EMU" ] || { echo "error: $EMU not built -- run 'make emu' first" >&2; exit 1; }
 [ -f build/bios-emu/cpm.sys ] || { echo "error: build/bios-emu/cpm.sys missing -- run 'make bios-emu' first" >&2; exit 1; }
 
-# BIOS sources (biosasm.8kn .inputs the other .8kn files), prebuilt
-# fpe.o/fpedep.o, the assembler predef, plus cpmsys.rel (the CCP+BDOS) and
-# libcpm.a (the C library, linked via -lcpm).
-SOURCES="bios.c \
-         biosasm.8kn biosdefs.8kn biosboot.8kn biosif.8kn biosio.8kn \
-         biosmem.8kn biostrap.8kn syscall.8kn \
-         fpe.o fpedep.o asz8k.pd \
-         cpmsys.rel libcpm.a"
+# Stock BIOS sources (from SRC). biosasm.8kn .inputs the other .8kn files.
+BIOS_FILES="bios.c \
+            biosasm.8kn biosdefs.8kn biosboot.8kn biosif.8kn biosio.8kn \
+            biosmem.8kn biostrap.8kn syscall.8kn"
+
+# BIOS-independent substrate (from SRC): prebuilt fpe.o/fpedep.o, the assembler
+# predef, the CCP+BDOS (cpmsys.rel) and C library (libcpm.a, linked via -lcpm).
+SUBSTRATE="fpe.o fpedep.o asz8k.pd cpmsys.rel libcpm.a"
 
 # In-guest toolchain. asz8k chains to xcon; zcc chains to zcc1/2/3.
 TOOLS="zcc.z8k zcc1.z8k zcc2.z8k zcc3.z8k \
@@ -40,7 +40,16 @@ DRIVE=$(mktemp -d "${TMPDIR:-/tmp}/cpm8k-cpmsys.XXXXXX")
 trap 'rm -rf "$DRIVE"' EXIT INT TERM
 
 echo "staging build inputs into temp drive: $DRIVE"
-for f in $SOURCES $TOOLS; do cp "$SRC/$f" "$DRIVE/"; done
+for f in $BIOS_FILES $SUBSTRATE $TOOLS; do cp "$SRC/$f" "$DRIVE/"; done
+
+# Optional BIOS overlay: a package dir (src/bios/<name>) supplies BIOS-specific
+# sources (.c/.8kn) overriding/adding to the stock set. Empty for stock M20.
+if [ -n "${BIOS_OVERLAY:-}" ]; then
+	echo "overlaying BIOS sources from: $BIOS_OVERLAY"
+	for f in "$BIOS_OVERLAY"/*.8kn "$BIOS_OVERLAY"/*.c; do
+		[ -f "$f" ] && cp "$f" "$DRIVE/"
+	done
+fi
 cp "$SUB" "$DRIVE/CPMSYS.SUB"
 
 echo "building (drive C: -> $DRIVE) ..."

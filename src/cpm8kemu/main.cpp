@@ -570,7 +570,7 @@ int main(int argc, char* argv[])
     // Auto-detect cpm.sys in default locations
     const char* sys_file = nullptr;
     {
-        static const char* defaults[] = {"cpm.sys", "build/bios-emu/cpm.sys", "src/bios/emu/cpm.sys", nullptr};
+        static const char* defaults[] = {"cpm.sys", "build/bios-emu/cpm.sys", "src/cpm8kemu/bios/cpm.sys", nullptr};
         for (const char** p = defaults; *p; p++) {
             struct stat st;
             if (stat(*p, &st) == 0) {

@@ -283,7 +283,7 @@ The emulator is fully host-endian independent:
 - `include/z8000_intf.h` - Abstract memory/IO bus interfaces
 - `src/z8000.cpp` - CPU emulation core, Interrupt() handler, run loop
 
-#### src/bios/emu/ (Thin BIOS for Emulator)
+#### src/cpm8kemu/bios/ (Thin BIOS for Emulator)
 - `biosdef.s` - Shared definitions (SC numbers, frame offsets, I/O ports)
 - `biosboot.s` - Bootstrap: clear BSS, set stack/PSAP, init traps, jump to CCP
 - `biostrap.s` - Trap handlers: _trap, bdossc, biossc, memsc, xfersc, trapinit
