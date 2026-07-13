@@ -533,6 +533,51 @@ ld8k caveat above). There is no committed build target for the loader yet.
   write the synthetic disk's full record count to the DMA. Without these the
   native BDOS tried sector I/O on host-dir drives ("disk select/read error").
 
+## Build System & System Generation
+
+The repo is a CP/M-8000 dev environment: build the emulator, regenerate the
+source tree, and generate bootable systems from pluggable BIOSes.
+
+### Emulator build
+`make` (default target `emu`) builds the host tools (`src/xoututils`), converts
+the CCP+BDOS and library from x.out to Z8k-COFF (`build/lib`), assembles the
+emulator's thin BIOS (`src/cpm8kemu/bios`, moved there as emulator
+infrastructure -- it is not a pluggable BIOS), and links the emulator host
+program. The thin BIOS dispatches BDOS/BIOS to host services; it has no loader.
+
+### Regenerating src/cpm8k (regenerate + overlay)
+`src/cpm8k/` is a *generated artifact*, not hand-maintained, so its deviation
+from the shipped product is explicit:
+- `make regenerate` -- extract the 75 pristine files from the six Olivetti-M20
+  distribution images (`distribution/CPM_8000_1.1/*.IMG`) with cpmtools +
+  `src/diskdefs_m20.mame`.
+- `make overlay` -- drop in the one deviation the build needs: the from-source
+  linker `src/linker/ld8k.z8k` (the shipped ld8k fails its `-r` pass-1->pass-2
+  handoff in the emulator; the rebuilt one fixes it, committed once as a stable
+  binary). `make cpm8k-src` runs both.
+- Verified: `bios.rel`, `cpm.sys`, `cpmldr.sys` all rebuild byte-identical from
+  the regenerated tree; `asz8k.pd` is pristine (matches the image).
+
+### System generation (sysgen)
+`make system NAME=<name> [LOADER=1] [BIOS=<dir>]` generates a bootable system.
+A **BIOS is a directory under `src/bios/` with a `Makefile`** (the recognition
+contract). `sysgen` runs `make -C src/bios/<name> bios.rel` to build the BIOS
+object, then does the final system link (`scripts/link-cpmsys.sh`:
+`bios.rel` + `cpmsys.rel` + `libcpm.a` -> `cpm.sys` via `ld8k`), plus the
+optional loader (`scripts/build-cpmldr.sh`), into `build/system/<name>/`.
+- BIOS packages are **overlays** on the stock M20 tree (`src/cpm8k`):
+  `src/bios/m20` has an empty overlay (pure stock); a custom board copies the
+  dir and drops in only its changed `.c`/`.8kn`. The three staging scripts
+  (`build-bios`/`cpmsys`/`cpmldr`) share the `BIOS_OVERLAY` model.
+- Verified: `make system NAME=m20 LOADER=1` produces `cpm.sys`/`cpmldr.sys`
+  byte-identical to the direct builders; `cpm.sys` boots in the emulator.
+
+### Native lane parked on a branch
+A second bring-up path -- a real-hardware BIOS built with the host `z8k-coff`
+toolchain from GNU-as `.s` sources into a single image (the z8001 board) -- was
+removed from `main` and preserved on the `native-lane` branch. `main` is
+classic-only: the in-emulator DR/Zilog toolchain producing x.out objects.
+
 ## Known Issues / TODO
 - Ctrl-C / Ctrl-D do not quit on an interactive tty. Raw mode clears ICANON
   and ISIG, so Ctrl-D is byte 0x04 (not EOF) and Ctrl-C is byte 0x03 (not
