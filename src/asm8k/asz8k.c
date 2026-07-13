@@ -154,8 +154,12 @@ struct	sytab	*syp;
 		iilexeme.ps_val0 = (exprval)sylook(tokstr);
 		syp = rfetch((vmadr)iilexeme.ps_val0);
 		if(syp->sy_typ == STKEY) {  /* keyword */
-			iilexeme.ps_val0 = syp->sy_val&0377;
 			iilexeme.ps_sym = syp->sy_val>>8&0377;
+			if(iilexeme.ps_sym >= 24) {  /* FP register / FP control register */
+				iilexeme.ps_sym = TKREG16;      /* route through the reg16 rule */
+				iilexeme.ps_val0 = syp->sy_val; /* keep full value for classing */
+			} else
+				iilexeme.ps_val0 = syp->sy_val&0377;
 		}
 	} else if(iilexeme.ps_sym==TKCOM || iilexeme.ps_sym==TKSPC ||
 	 iilexeme.ps_sym==TKEOL) iilexeme.ps_sym = TKEOF;
@@ -223,8 +227,8 @@ int	displen,
 	 */
 	skel0 = fmp->fm_skel>>8 & 0xff;
 	skel1 = fmp->fm_skel & 0xff;
-	skel2 = 0;
-	skel3 = fmp->fm_flg & FMNIB7;
+	skel2 = (fmp->fm_flg >> 8) & 0xf8;	/* 2nd skeleton word, high byte (mask flag bits) */
+	skel3 = fmp->fm_flg & 0xff;		/* 2nd skeleton word, low byte */
 	srel1 = 0;
 	for(i=0 ; i<OPMAX ; i++) {
 		f = optab[i].op_flg;
@@ -504,7 +508,7 @@ char		predef[30];
 			}
 			fmp->fm_skel = tokval;
 			preget(TKSPC);
-			fmp->fm_flg = preget(TKCON);
+			fmp->fm_flg = preget(TKCON) & 0xffffL;
 			if(token() != TKEOL) break;
 			preget(TKCON);
 		}
@@ -555,11 +559,14 @@ reg	struct	psframe	*p, *pl;
 		curop.op_rel = curop.op_flg = 0;
 		return;
 
-	case 52:	/* <operand> ::= reg16 */
-		curop.op_cls = (1L<<OCREG16);
-		if(!segflg)
-			curop.op_cls |= (1L<<OCREGA);
-		curop.op_val = p->ps_val1;
+	case 52:	/* <operand> ::= reg16 (or FP register/control register) */
+		if((p->ps_val1 & 0xff00) >= 0x1800)
+			curop.op_cls = 1L << (((p->ps_val1 >> 8) & 0xff) - 4);
+		else {
+			curop.op_cls = (1L<<OCREG16);
+			if(!segflg) curop.op_cls |= (1L<<OCREGA);
+		}
+		curop.op_val = p->ps_val1 & 0xff;
 		curop.op_rel = curop.op_flg = 0;
 		return;
 

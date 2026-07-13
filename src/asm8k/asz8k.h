@@ -12,9 +12,9 @@
  * Instruction format table flags (in fm_flg).
  */
 #define	FMNIB7	0x000f		/* value to OR into nibble 7 */
-#define	FMSKEL2	0x0010		/* generate 2nd skeleton word */
-#define	FMNEGI	0x0020		/* negate immediate value for right shift */
-#define	FMLAST	0x8000		/* final entry for this instruction */
+#define	FMSKEL2	0x0100		/* generate 2nd skeleton word */
+#define	FMNEGI	0x0200		/* negate immediate value for right shift */
+#define	FMLAST	0x10000L	/* final entry (bit 16: fm_flg bits 0-15 hold the 2nd word) */
 /*
  * Operand actions (in fm_op[]).
  */
@@ -90,7 +90,7 @@
 struct	format {		/* instruction format table entry */
 	int	fm_op[OPMAX];		/* operand descriptions */
 	int	fm_skel;		/* opcode skeleton word */
-	int	fm_flg;			/* flags */
+	long	fm_flg;			/* flags (bits 0-15 = 2nd skeleton word) */
 };
 /*
  * Global variable declarations.

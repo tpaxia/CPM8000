@@ -3,12 +3,12 @@
 # build-asz8k.sh -- build the asz8k assembler from source (src/asm8k) using the
 # emulator's in-guest DR/Zilog toolchain.
 #
-# NOTE: these sources are an earlier (pre-FPU) assembler version. They rebuild a
-# working assembler that reproduces integer-only objects (e.g. biosasm.o /
-# bios.rel) byte-for-byte, but they do NOT support the Z8070 floating-point
-# instructions (fldctl/fldil/f0-f7) used by startup.8kn, so they cannot yet
-# rebuild the full toolchain. The matching predef is src/asm8k/asz8k.pd (this
-# is a different predef from the distribution's V1.1B src/cpm8k/asz8k.pd).
+# These sources rebuild a working assembler that reproduces the CP/M-8000
+# objects byte-for-byte, including the Z8000 EPA extended (floating-point)
+# instructions (fldctl/fldil/fadd/... with f0-f7) used by startup.8kn. Those
+# ops are handled in software by the fpe emulator (no Z8070 hardware exists);
+# the assembler just emits the two-word EPA/fpe encoding. The predef
+# src/asm8k/asz8k.pd carries the FP instruction/register definitions.
 #
 # It stages the sources and toolchain into a fresh temporary drive mounted as
 # C:, runs scripts/asz8k.sub, and copies the result out. The recipe writes
