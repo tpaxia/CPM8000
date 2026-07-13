@@ -96,6 +96,7 @@ CPM8000/
       bios/           thin BIOS for the emulator (assembly) -- infrastructure
     xoututils/        C tools to convert Zilog x.out format to Z8k-COFF
     linker/           ld8k linker source (+ committed overlay binary)
+    asm8k/            asz8k assembler source (from-source build)
     bios/             pluggable BIOSes (each a Makefile package)
       m20/            M20 reference BIOS (overlay on src/cpm8k)
   z8000_emu/          Z8001 CPU emulator library
