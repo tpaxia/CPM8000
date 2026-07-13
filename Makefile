@@ -71,9 +71,10 @@ lib: $(LIBDIR)/libcpm.a $(LIBDIR)/cpmsys.o
 bios-emu: lib
 	$(MAKE) -C src/cpm8kemu/bios BUILDDIR=$(abspath $(BUILDDIR)/bios-emu) LIBDIR=$(abspath $(LIBDIR))
 
-# --- Build emulator host program ---
+# --- Build emulator host program (cross-platform CMake build) ---
 emu: bios-emu
-	$(MAKE) -C src/cpm8kemu BUILDDIR=$(abspath $(BUILDDIR)/emu) Z8K_BUILDDIR=$(abspath $(BUILDDIR)/z8000_emu)
+	cmake -S . -B $(BUILDDIR)/emu -DCMAKE_BUILD_TYPE=Release
+	cmake --build $(BUILDDIR)/emu
 
 clean:
 	rm -rf $(BUILDDIR)

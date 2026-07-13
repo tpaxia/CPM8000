@@ -51,20 +51,24 @@ See [PROGRESS.md](PROGRESS.md) for detailed architecture documentation.
 - **z8k-coff binutils** — GNU Binutils with `--target=z8k-coff`;
   fork at [tpaxia/binutils-2.46.0](https://github.com/tpaxia/binutils-2.46.0)
 - **C++17 compiler** — for the Z8001 emulator and host program
+- **CMake ≥ 3.16** — cross-platform build of the emulator (`build/emu/cpm8k`)
 
 ## Quick start
 
 ```
-make            # builds tools, converts library, assembles BIOS
-make bios-emu   # build thin BIOS + CCP for emulator
-make emu         # build the hosted emulator binary
+# first-time checkout: fetch the z8000_emu submodule (the CPU emulator core)
+git submodule update --init --recursive
+
+make            # build the emulator (tools, library, emu BIOS, CMake host build)
+make system NAME=m20    # generate a bootable CP/M-8000 system (build/system/m20/)
 
 # run the emulator (at least one drive must be mapped)
 build/emu/cpm8k -d A=dir:drives/A                  # drive A = host directory
 build/emu/cpm8k -d A=img:distribution/CPM_8000_1.1/REL11A.IMG   # drive A = CP/M disk image
 ```
 
-All build artifacts go into `build/`.
+All build artifacts go into `build/`. The emulator itself is built with CMake
+(`cmake -S . -B build/emu`), which `make emu` drives; see [Build pipeline](#build-pipeline).
 
 ### Drives
 
