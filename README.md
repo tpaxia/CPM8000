@@ -101,6 +101,7 @@ CPM8000/
     xoututils/        C tools to convert Zilog x.out format to Z8k-COFF
     linker/           ld8k linker source (+ committed overlay binary)
     asm8k/            asz8k assembler source (from-source build)
+    fpe/              software floating-point library source (fpe, fpedep)
     bios/             pluggable BIOSes (each a Makefile package)
       m20/            M20 reference BIOS (overlay on src/cpm8k)
   z8000_emu/          Z8001 CPU emulator library
@@ -264,6 +265,36 @@ places it), which the fixed linker emits, but the distribution stored
 `0x0b9c`. These are debug-only symbols — the relocation table is empty in a
 fully-linked `cpm.sys` and the loader never reads the symbol table — so the
 difference never affected the running system, only symbolic debugging.
+
+## Floating-point library (fpe)
+
+The M20 has no Z8070 arithmetic coprocessor, so floating point is emulated in
+software. `fpe` is the trap handler for the Z8000 EPA extended (floating-point)
+instructions: when one traps, `fpe` decodes the two-word EPA/fpe encoding and
+emulates the operation. `fpedep.z8k` is its system-dependent half (memory
+map/transfer helpers for the segmented trap frame).
+
+The sources live in `src/fpe/`; `scripts/build-fpe.sh` assembles them
+(`asz8k` → `xcon`):
+
+```
+scripts/build-fpe.sh       # -> build/fpe/fpe.o, fpedep.o
+```
+
+Both halves are assembled against the segmented **`biosdefs.z8k`** — the M20 is
+a Z8001, so its saved trap frame carries a PC-segment word (`scseg`). The
+Z8002 variant `biosdefs2.z8k` omits `scseg` (non-segmented) and renames a few
+frame slots; assembling against it gives the wrong offsets and a divergent
+symbol table.
+
+`fpedep.z8k`'s function bodies were transcribed from the distribution
+`fpedep.o` disassembly — a hand-optimized variant using `ldk`/`xor`/`clrb`
+(not the longer `ld`/`ldl`/`ldb #0` in the `newos`/`bios` copies) — so its
+object content is **byte-identical** to `src/cpm8k/fpedep.o`. `fpe.o` is
+byte-identical except the `epuwp` work area, which is declared with `.block`
+(reserved, uninitialized): the distribution binary carries leftover buffer
+garbage there, this build emits zeros, and no relocations touch that region —
+so the two are functionally identical.
 
 ## xoututils
 

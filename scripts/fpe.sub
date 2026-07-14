@@ -1,0 +1,3 @@
+; assemble the floating-point library from src/fpe
+asz8k -o fpe.o fpe.8kn
+asz8k -o fpedep.o fpedep.8kn
