@@ -1,0 +1,3 @@
+; build the Tic-Tac-Toe game entirely on drive C
+zcc -c -s -M1 tictac.c
+ld8k -w -s -o tictac.z8k startup.o tictac.o -lcpm

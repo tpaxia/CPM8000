@@ -137,8 +137,49 @@ Bootable CP/M-8000 systems are then generated with `make system` (see below).
 | `make bios-emu` | Assemble thin BIOS for emulator |
 | `make emu` | Build the hosted emulator binary |
 | `make system NAME=<n>` | Generate a bootable system for a BIOS (see below) |
+| `make m20-hd` | Build the native M20 development hard disk for MAME drive C: |
 | `make regenerate` / `overlay` / `cpm8k-src` | Regenerate `src/cpm8k` from the images (+ overlay) |
 | `make clean` | Remove `build/` |
+
+## Native M20 development hard disk
+
+`make m20-hd` creates `build/m20-hd/m20-cpm8000.chd`, a non-bootable native
+M20 hard disk intended to appear as drive `C:` when CP/M-8000 is booted from
+a floppy in MAME.  Attach it with:
+
+```
+m20 m20 -flop1 <boot-disk.img> -hard1 build/m20-hd/m20-cpm8000.chd
+```
+
+The filesystem matches the hard-disk DPB in `src/cpm8k/bios.c` (512 directory
+entries, 4 KiB allocation blocks, and three reserved 4 KiB logical tracks).
+The raw CHD geometry is the stock monitor's 180 cylinders, six heads, 33
+physical 256-byte sectors.  The monitor maps 32 data sectors per head; the
+builder inserts the unused 33rd sector and initializes the bad-block table at
+CHS 0/0/1 with an empty list.  The CHD is deliberately uncompressed because
+MAME must open this writable development disk directly.
+
+The image contains the original CP/M-8000 tools and M20 sources plus the
+assembler and linker sources.  These nine independent recipes are installed
+in the flat CP/M 8.3 namespace and have been tested sequentially against the
+same directory image:
+
+```
+SUBMIT ASZ8K
+SUBMIT LD8K
+SUBMIT BIOS
+SUBMIT CPMSYS
+SUBMIT LINKSYS
+SUBMIT MAKELDR
+SUBMIT MKPUTBT
+SUBMIT WUMP
+SUBMIT TICTAC
+```
+
+The drive-C recipes differ from the distribution's floppy-oriented submits
+only where required: the game sources use current-drive includes, MAKELDR
+does not install a boot record on drive A, and MKPUTBT supplies the missing
+BDOS declarations.  The original submits under `src/cpm8k/` remain unchanged.
 
 ## System generation (sysgen)
 

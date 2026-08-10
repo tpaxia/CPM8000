@@ -1,0 +1,11 @@
+; build cpmldr.sys on drive C without writing a boot record to drive A
+asz8k -o lbiosasm.o lbiosasm.8kn
+zcc -c -M1 -Dloader bios.c
+ld8k -o ldrbios.rel -r lbiosasm.o bios.o
+ld8k -o cpmldr.rel -r ldrbios.rel ldrbdos.rel
+ld8k -s -o cpmldrs.sys cpmldr.rel -lcpm
+era bootldr.a
+ar8k qv bootldr.a ldrbios.rel ldrbdos.rel
+ar8k qv bootldr.a lbiosasm.o bios.o
+pip c:cpmldr.sys[g0]=cpmldrs.sys
+user 0

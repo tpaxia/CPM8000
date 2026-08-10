@@ -1,0 +1,16 @@
+# Olivetti M20 native CP/M-8000 hard-disk filesystem.
+#
+# The M20 BIOS exposes each physical head as two 16-sector logical tracks.
+# The DPB in src/cpm8k/bios.c is:
+#   spt=32, bsh=5, dsm=2154, drm=511, al0=f0, off=3
+# Here cpmtools sectors are physical 256-byte sectors, hence sectrk=16.
+# 2158 logical tracks = 3 reserved tracks + 2155 allocation blocks.
+diskdef m20hd
+  seclen 256
+  tracks 2158
+  sectrk 16
+  blocksize 4096
+  maxdir 512
+  boottrk 3
+  os 2.2
+end

@@ -1,0 +1,4 @@
+; build putboot.z8k on drive C
+asz8k -o trk.o trk.8kn
+zcc -c -M1 putboot.c
+ld8k -w -i -o putboot.z8k startup.o opt1.o putboot.o trk.o -lcpm

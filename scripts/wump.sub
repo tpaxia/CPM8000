@@ -1,0 +1,3 @@
+; build the Wump game entirely on drive C
+zcc -c -M1 wump.c
+ld8k -w -s -o wump.z8k startup.o wump.o -lcpm

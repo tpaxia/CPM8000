@@ -17,7 +17,7 @@ BUILDDIR = build
 XARCH = $(BUILDDIR)/tools/xarch
 XOUT2COFF = $(BUILDDIR)/tools/xout2coff
 LIBDIR = $(BUILDDIR)/lib
-.PHONY: all clean tools lib bios-emu emu regenerate overlay cpm8k-src system
+.PHONY: all clean tools lib bios-emu emu regenerate overlay cpm8k-src system m20-hd
 
 all: emu
 
@@ -36,6 +36,10 @@ cpm8k-src: regenerate overlay
 # make system NAME=<name> [BIOS=<dir>] [LOADER=1]   (default M20)
 system:
 	scripts/sysgen.sh $(if $(BIOS),--bios $(BIOS),) $(if $(LOADER),--loader,) $(if $(NAME),$(NAME),m20)
+
+# Native M20 development hard disk for use as MAME drive C:.
+m20-hd:
+	scripts/build-m20-hd.sh
 
 # --- Build host tools ---
 tools: $(XARCH) $(XOUT2COFF)
