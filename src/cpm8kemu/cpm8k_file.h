@@ -33,7 +33,7 @@ static constexpr int DIR_ENTRY_SIZE = 32;
 struct OpenFile {
     FILE* fp;
     uint16_t fcb_addr;    // FCB address in Z8001 memory (offset only)
-    uint8_t  fcb_seg;     // FCB segment
+    uint16_t fcb_seg;     // Z8001 segment or Z8002 bank tag
     bool     active;
     std::string host_path;
 };
@@ -49,7 +49,7 @@ struct SearchState {
 
 class CpmFileSystem {
 public:
-    CpmFileSystem(SegmentedMemory& mem);
+    CpmFileSystem(CpmAddressSpace& mem);
     ~CpmFileSystem();
 
     // Set host directory for a drive (0=A, 1=B, 2=C, 3=D)
@@ -63,7 +63,7 @@ public:
     uint32_t get_dma() const { return m_dma_addr; }
 
     // Set the caller's segment (extracted from PC when SC is intercepted)
-    void set_caller_seg(uint8_t seg) { m_caller_seg = seg; }
+    void set_caller_tag(uint16_t tag) { m_caller_tag = tag; }
 
     // Current/default drive
     void set_current_drive(int drive) { m_current_drive = drive; }
@@ -104,16 +104,16 @@ public:
     void reset_all_drives();                 // Func 13
     void reset_drives(uint16_t mask);        // Func 37
     void close_all_files();                  // Close all open files (cold boot)
-    void close_user_files(uint8_t sys_seg);  // Close files not in sys_seg (warm boot)
+    void close_user_files(uint16_t system_tag); // Close non-system files (warm boot)
 
 private:
-    SegmentedMemory& m_mem;
+    CpmAddressSpace& m_mem;
     std::string m_drive_paths[MAX_DRIVES];
     int m_current_drive;
     int m_default_drive;
     int m_user;
     uint32_t m_dma_addr; // segmented address for DMA
-    uint8_t m_caller_seg; // caller's segment (from PC when SC intercepted)
+    uint16_t m_caller_tag; // Z8001 segment or Z8002 bank tag
     uint16_t m_ro_vec;   // read-only drive vector (bit per drive)
 
     OpenFile m_files[MAX_OPEN_FILES];

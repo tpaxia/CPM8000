@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# sysgen.sh -- generate a bootable CP/M-8000 system for a chosen BIOS.
+# sysgen.sh -- generate CP/M-8000 guest system binaries for a chosen BIOS.
 #
 # A BIOS is a directory with a Makefile (a "BIOS package") under src/bios/. It
 # builds a BIOS object with `make bios.rel`; sysgen then does the final system
@@ -12,8 +12,8 @@
 #   scripts/sysgen.sh [--bios DIR] [--loader] <name>
 #
 #     --bios DIR   BIOS package directory. Default: src/bios/<name>.
-#     --loader     also build the cold-boot loader cpmldr.sys (optional; a
-#                  two-stage boot medium embeds it, a direct boot does not).
+#     --loader     also build the cold-boot loader cpmldr.sys.  Installing it
+#                  with putboot is a separate, target-specific operation.
 #     <name>       system name; artifacts land in build/system/<name>/.
 
 set -eu

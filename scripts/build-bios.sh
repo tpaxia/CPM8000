@@ -20,11 +20,12 @@ SUB=scripts/bios.sub
 OUT=${1:-build/bios-src}
 
 [ -x "$EMU" ] || { echo "error: $EMU not built -- run 'make emu' first" >&2; exit 1; }
-[ -f build/bios-emu/cpm.sys ] || { echo "error: build/bios-emu/cpm.sys missing -- run 'make bios-emu' first" >&2; exit 1; }
+[ -f build/bios-emu-z8001/cpm.sys ] || { echo "error: build/bios-emu-z8001/cpm.sys missing -- run 'make bios-emu-z8001' first" >&2; exit 1; }
 
 # Sources bios.sub needs. biosasm.8kn pulls in the other .8kn files via
-# `.input`, so they must be present too. fpe.o/fpedep.o are used prebuilt
-# (their .8kn sources are not shipped). asz8k.pd is the assembler predef.
+# `.input`, so they must be present too. fpe.o/fpedep.o are used prebuilt here;
+# the distribution did not ship their sources, while the maintained sources
+# are rebuilt separately by scripts/build-fpe.sh. asz8k.pd is the predef.
 SOURCES="bios.c \
          biosasm.8kn biosdefs.8kn biosboot.8kn biosif.8kn biosio.8kn \
          biosmem.8kn biostrap.8kn syscall.8kn \

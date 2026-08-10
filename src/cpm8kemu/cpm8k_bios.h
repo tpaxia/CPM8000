@@ -8,15 +8,18 @@
 // caller_seg is the segment of the caller (passed from assembly trap handler).
 // Returns true if the syscall was handled.
 // warm_boot is set to true if the handler requests a warm boot.
-bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint8_t caller_seg);
+bool bios_handler(z8002_device& cpu, CpmAddressSpace& mem, bool& warm_boot,
+                  uint16_t system_tag, uint16_t caller_tag);
 
 // Initialize BIOS disk subsystem: open every IMAGE-backed drive from the
 // drive table and build its DPH/DPB in Z8001 memory. HOST_DIR drives are
 // serviced via CpmFileSystem and skipped here.
 // base_offset = first free offset in system segment (after MRT).
 // Returns offset past the last byte used.
-uint16_t bios_init_disks(SegmentedMemory& mem, uint16_t base_offset);
+uint16_t bios_init_disks(CpmAddressSpace& mem, uint16_t system_tag,
+                         uint16_t base_offset);
 void bios_cleanup_disks();
+void bios_prepare_warm_boot();
 
 // System-segment offsets of the disk structures built by bios_init_disks,
 // for serving DRV_DPB/DRV_ALLOCVEC on host-dir drives at the BDOS level

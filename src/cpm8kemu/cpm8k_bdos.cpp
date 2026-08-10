@@ -6,15 +6,6 @@
 #include <cstdio>
 #include <cstring>
 
-// Current caller's segment (set at start of bdos_route from PC)
-static uint8_t s_caller_seg = 0x0A;
-
-// Backend of the most recent F_SFIRST, so F_SNEXT routes the same way.
-static bool s_last_search_host = false;
-
-// BDOS call trace flag
-static bool s_bdos_trace = false;
-
 // Parameter type for trace formatting
 enum class BdosParam {
     NONE,   // no parameter
@@ -96,10 +87,6 @@ static const BdosFunc s_bdos_funcs[] = {
 };
 static constexpr int NUM_BDOS_FUNCS = sizeof(s_bdos_funcs) / sizeof(s_bdos_funcs[0]);
 
-// Extern references
-extern SegmentedMemory* g_mem;
-extern bool g_chain_pending;   // set on P_CHAIN; consumed by the warm-boot loop
-
 // --- BDOS Function 59: Program Load (PGMLD) ---
 // Loads an x.out format program into the TPA.
 // Parameter: RR6 = address of Load Parameter Block (LPB)
@@ -112,9 +99,39 @@ extern bool g_chain_pending;   // set on P_CHAIN; consumed by the warm-boot loop
 //   0x14: flags    (2) - RETURN: SPLIT=0x4000, SEG=0x2000
 // Returns: 0=success, 1=bad header, 2=no memory, 3=read error
 
-static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offset)
+class LoaderAddressing {
+public:
+    virtual ~LoaderAddressing() = default;
+    virtual uint16_t tpa_tag(uint16_t raw_tag) const = 0;
+    virtual uint16_t code_tag(uint16_t tpa_tag, bool split) const = 0;
+    virtual uint16_t data_tag(uint16_t tpa_tag, bool split) const = 0;
+    virtual uint16_t execution_tag(uint16_t tpa_tag, bool split) const = 0;
+    virtual bool accepts_segmented_programs() const = 0;
+};
+
+class Z8001LoaderAddressing final : public LoaderAddressing {
+public:
+    uint16_t tpa_tag(uint16_t raw) const override { return raw & 0x7F; }
+    uint16_t code_tag(uint16_t tag, bool split) const override { return split ? 0x0A : tag; }
+    uint16_t data_tag(uint16_t tag, bool split) const override { return split ? 0x08 : tag; }
+    uint16_t execution_tag(uint16_t tag, bool split) const override { return split ? 0x08 : tag; }
+    bool accepts_segmented_programs() const override { return true; }
+};
+
+class Z8002LoaderAddressing final : public LoaderAddressing {
+public:
+    uint16_t tpa_tag(uint16_t raw) const override { return raw; }
+    uint16_t code_tag(uint16_t tag, bool) const override { return tag; }
+    uint16_t data_tag(uint16_t tag, bool split) const override { return split ? 0x0200 : tag; }
+    uint16_t execution_tag(uint16_t tag, bool) const override { return tag; }
+    bool accepts_segmented_programs() const override { return false; }
+};
+
+static int bdos_pgmld(CpmAddressSpace& mem, CpmFileSystem& fs,
+                      uint16_t caller_tag, uint16_t lpb_offset,
+                      const LoaderAddressing& addressing)
 {
-    uint32_t lpb_addr = (uint32_t(s_caller_seg) << 16) | lpb_offset;
+    uint32_t lpb_addr = (uint32_t(caller_tag) << 16) | lpb_offset;
 
     // Read LPB fields
     uint32_t fcbaddr  = (uint32_t(mem.read_word(lpb_addr + 0)) << 16) |
@@ -125,7 +142,7 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
                          mem.read_word(lpb_addr + 10);
 
     uint16_t fcb_offset = fcbaddr & 0xFFFF;
-    uint8_t  tpa_seg    = (pgldaddr >> 16) & 0x7F;
+    uint16_t tpa_tag    = addressing.tpa_tag(pgldaddr >> 16);
     uint16_t tpa_base   = pgldaddr & 0xFFFF;
     (void)pgtop; // TPA limits from LPB are ignored (matching real BDOS)
 
@@ -164,6 +181,11 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
         delete[] fbuf;
         return 1;
     }
+    if (segmented && !addressing.accepts_segmented_programs()) {
+        fprintf(stderr, "PGMLD: segmented program cannot run on Z8002\n");
+        delete[] fbuf;
+        return 1;
+    }
 
     // Parse segment headers (4 bytes each)
     struct XSeg { uint8_t number; uint8_t type; uint16_t length; };
@@ -185,19 +207,10 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
     const int DEFSTACK = 256;  // default stack
     const uint32_t SEGLEN = 0x10000;
 
-    // For split I/D:
-    //   code_load_seg = 0x0A (d_map -> 0x10000 = code area, same phys as seg 8 i_map)
-    //   data_load_seg = 0x08 (d_map -> 0x20000 = data area)
-    //   exec_seg      = 0x08 (execution: i_map -> code @ 0x10000, d_map -> data @ 0x20000)
-    // For combined I/D: everything goes to tpa_seg (usually 0x0A)
-    uint8_t code_load_seg = tpa_seg;  // segment used to LOAD code (via data writes)
-    uint8_t data_load_seg = tpa_seg;  // segment used to LOAD data (via data writes)
-    uint8_t exec_seg      = tpa_seg;  // segment used to EXECUTE (goes in PC/basepage)
-    if (split) {
-        code_load_seg = 0x0A; // d_map -> 0x10000 = same phys as seg 8 i_map
-        data_load_seg = 0x08; // d_map -> 0x20000 = split data area
-        exec_seg      = 0x08; // i_map -> 0x10000 (code), d_map -> 0x20000 (data)
-    }
+    uint16_t code_load_tag = addressing.code_tag(tpa_tag, split);
+    uint16_t data_load_tag = addressing.data_tag(tpa_tag, split);
+    uint16_t exec_tag = addressing.execution_tag(tpa_tag, split);
+    mem.configure_program(code_load_tag, data_load_tag);
 
     uint32_t code_load_offset = 0; // Current offset within code segment
     uint32_t data_load_offset = 0; // Current offset within data segment
@@ -212,7 +225,7 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
 
         // Determine target segment: for split I/D, CONST/DATA/BSS/STACK go to data seg
         bool to_data = split && (stype == 4 || stype == 5 || stype == 1 || stype == 2);
-        uint8_t  target_seg = to_data ? data_load_seg : code_load_seg;
+        uint16_t target_tag = to_data ? data_load_tag : code_load_tag;
         uint32_t& load_off  = to_data ? data_load_offset : code_load_offset;
 
         switch (stype) {
@@ -222,7 +235,7 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
             if (text_size == 0) text_loc = load_off;
             text_size += slen;
             for (uint16_t j = 0; j < slen; j++) {
-                mem.write_byte((uint32_t(target_seg) << 16) | (tpa_base + load_off + j),
+                mem.write_byte((uint32_t(target_tag) << 16) | (tpa_base + load_off + j),
                                code_data[code_offset + j]);
             }
             load_off += slen;
@@ -234,7 +247,7 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
             if (data_size == 0) data_loc = load_off;
             data_size += slen;
             for (uint16_t j = 0; j < slen; j++) {
-                mem.write_byte((uint32_t(target_seg) << 16) | (tpa_base + load_off + j),
+                mem.write_byte((uint32_t(target_tag) << 16) | (tpa_base + load_off + j),
                                code_data[code_offset + j]);
             }
             load_off += slen;
@@ -245,7 +258,7 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
             if (bss_size == 0) bss_loc = load_off;
             bss_size += slen;
             for (uint16_t j = 0; j < slen; j++) {
-                mem.write_byte((uint32_t(target_seg) << 16) | (tpa_base + load_off + j), 0);
+                mem.write_byte((uint32_t(target_tag) << 16) | (tpa_base + load_off + j), 0);
             }
             load_off += slen;
             break;
@@ -269,7 +282,7 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
     // Calculate basepage and stack locations (matching real BDOS pgmld.c)
     // stkloc = data_segment_base + SEGLEN - BPLEN - stksiz
     // Basepage and stack always go in the data segment
-    uint32_t data_segment_base = (uint32_t(data_load_seg) << 16) | tpa_base;
+    uint32_t data_segment_base = (uint32_t(data_load_tag) << 16) | tpa_base;
     uint32_t stkloc = data_segment_base + SEGLEN - BPLEN - stk_size;
 
     uint32_t bp_addr = stkloc;
@@ -280,12 +293,11 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
         mem.write_byte(bp_addr + i, 0);
 
     // Basepage fields (matching real BDOS setbase())
-    // For split I/D: lcode/ltpa use exec_seg, ldata/lbss use data_load_seg
-    uint32_t code_addr = (uint32_t(exec_seg) << 16) | (tpa_base + text_loc);
-    uint32_t data_addr_val = (uint32_t(data_load_seg) << 16) | (tpa_base + data_loc);
+    uint32_t code_addr = (uint32_t(exec_tag) << 16) | (tpa_base + text_loc);
+    uint32_t data_addr_val = (uint32_t(data_load_tag) << 16) | (tpa_base + data_loc);
     uint32_t bss_addr;
     if (bss_size > 0)
-        bss_addr = (uint32_t(data_load_seg) << 16) | (tpa_base + bss_loc);
+        bss_addr = (uint32_t(data_load_tag) << 16) | (tpa_base + bss_loc);
     else
         bss_addr = data_addr_val + data_size; // bssloc = dataloc + datasiz
     uint32_t free_len = (data_seg_used < data_seg_limit) ? (data_seg_limit - data_seg_used) : 0;
@@ -337,22 +349,32 @@ static int bdos_pgmld(SegmentedMemory& mem, CpmFileSystem& fs, uint16_t lpb_offs
     return 0; // GOOD
 }
 
-void bdos_set_trace(bool enable)
+int Z8001ProgramLoader::load(CpmAddressSpace& mem, CpmFileSystem& fs,
+                             uint16_t caller_tag, uint16_t lpb_offset)
 {
-    s_bdos_trace = enable;
+    static const Z8001LoaderAddressing addressing;
+    return bdos_pgmld(mem, fs, caller_tag, lpb_offset, addressing);
+}
+
+int Z8002ProgramLoader::load(CpmAddressSpace& mem, CpmFileSystem& fs,
+                             uint16_t caller_tag, uint16_t lpb_offset)
+{
+    static const Z8002LoaderAddressing addressing;
+    return bdos_pgmld(mem, fs, caller_tag, lpb_offset, addressing);
 }
 
 // Extract filename from an FCB at the given offset in the caller's segment
-static void fcb_filename(SegmentedMemory& mem, uint16_t fcb_off, char* buf, size_t buflen)
+static void fcb_filename(CpmAddressSpace& mem, uint16_t caller_tag,
+                         uint16_t fcb_off, char* buf, size_t buflen)
 {
     // FCB: byte 0 = drive, bytes 1-8 = name, bytes 9-11 = type
-    uint8_t drv = mem.read_byte((uint32_t(s_caller_seg) << 16) | fcb_off);
+    uint8_t drv = mem.read_byte((uint32_t(caller_tag) << 16) | fcb_off);
     char name[9], type[4];
     for (int i = 0; i < 8; i++)
-        name[i] = mem.read_byte((uint32_t(s_caller_seg) << 16) | (fcb_off + 1 + i)) & 0x7F;
+        name[i] = mem.read_byte((uint32_t(caller_tag) << 16) | (fcb_off + 1 + i)) & 0x7F;
     name[8] = '\0';
     for (int i = 0; i < 3; i++)
-        type[i] = mem.read_byte((uint32_t(s_caller_seg) << 16) | (fcb_off + 9 + i)) & 0x7F;
+        type[i] = mem.read_byte((uint32_t(caller_tag) << 16) | (fcb_off + 9 + i)) & 0x7F;
     type[3] = '\0';
     // Trim trailing spaces
     for (int i = 7; i >= 0 && name[i] == ' '; i--) name[i] = '\0';
@@ -361,7 +383,8 @@ static void fcb_filename(SegmentedMemory& mem, uint16_t fcb_off, char* buf, size
     snprintf(buf, buflen, "%c:%.8s.%.3s", d, name, type);
 }
 
-static void bdos_trace_call(uint16_t func, z8002_device& cpu, SegmentedMemory& mem)
+static void bdos_trace_call(uint16_t func, z8002_device& cpu,
+                            CpmAddressSpace& mem, uint16_t caller_tag)
 {
     const BdosFunc* f = (func < NUM_BDOS_FUNCS) ? &s_bdos_funcs[func] : nullptr;
     const char* name = (f && f->name) ? f->name : "???";
@@ -386,7 +409,7 @@ static void bdos_trace_call(uint16_t func, z8002_device& cpu, SegmentedMemory& m
         break;
     case BdosParam::FCB: {
         char fname[20];
-        fcb_filename(mem, cpu.get_reg(7), fname, sizeof(fname));
+        fcb_filename(mem, caller_tag, cpu.get_reg(7), fname, sizeof(fname));
         fprintf(stderr, " %02X:%04X %s", cpu.get_reg(6), cpu.get_reg(7), fname);
         break;
     }
@@ -396,10 +419,10 @@ static void bdos_trace_call(uint16_t func, z8002_device& cpu, SegmentedMemory& m
 
 // Resolve the target drive (0=A .. 15=P) of an FCB at `fcb_off` in segment
 // `seg`. The FCB drive byte is 0 for the current/default drive, else 1=A..16=P.
-static int fcb_drive(SegmentedMemory& mem, uint8_t seg, uint16_t fcb_off,
+static int fcb_drive(CpmAddressSpace& mem, uint16_t tag, uint16_t fcb_off,
                      CpmFileSystem& fs)
 {
-    uint8_t raw = mem.read_byte((uint32_t(seg) << 16) | fcb_off);
+    uint8_t raw = mem.read_byte((uint32_t(tag) << 16) | fcb_off);
     if (raw == '?')                     // '?' = current drive, match any user
         return fs.get_current_drive();
     uint8_t d = raw & 0x1F;
@@ -408,7 +431,7 @@ static int fcb_drive(SegmentedMemory& mem, uint8_t seg, uint16_t fcb_off,
 
 // True if the n console-line bytes at `addr`, once trimmed of surrounding
 // spaces/tabs and upper-cased, exactly equal `word`.
-static bool console_line_is(const SegmentedMemory& mem, uint32_t addr,
+static bool console_line_is(const CpmAddressSpace& mem, uint32_t addr,
                             uint8_t n, const char* word)
 {
     uint8_t start = 0, end = n;
@@ -436,10 +459,10 @@ static bool console_line_is(const SegmentedMemory& mem, uint32_t addr,
 // buffer (buf[0]=max length, buf[1]=count out, buf[2..]=chars). Serviced in
 // C++ because the native BDOS gates its line read on console status, which
 // reports not-ready for our host console, so it never reads a character.
-static int bdos_read_console_line(z8002_device& cpu, SegmentedMemory& mem,
-                                  uint8_t seg, uint16_t buf_off)
+static int bdos_read_console_line(z8002_device& cpu, CpmAddressSpace& mem,
+                                  uint16_t tag, uint16_t buf_off)
 {
-    uint32_t base = (uint32_t(seg) << 16) | buf_off;
+    uint32_t base = (uint32_t(tag) << 16) | buf_off;
     uint8_t maxlen = mem.read_byte(base + 0);
     if (maxlen == 0) maxlen = 1;
 
@@ -489,19 +512,18 @@ static int bdos_read_console_line(z8002_device& cpu, SegmentedMemory& mem,
     return 0;
 }
 
-bool bdos_route(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
+bool BdosRouter::route(z8002_device& cpu, uint16_t caller_tag)
 {
     // Register conventions: r5 = function number, rr6 = parameter.
     uint16_t func = cpu.get_reg(5);
     uint16_t param_lo = cpu.get_reg(7); // Low word of rr6 (often an address)
 
-    SegmentedMemory& mem = *g_mem;
+    CpmAddressSpace& mem = m_mem;
+    CpmFileSystem& fs = m_fs;
+    fs.set_caller_tag(caller_tag);
 
-    s_caller_seg = caller_seg;
-    fs.set_caller_seg(caller_seg);
-
-    if (s_bdos_trace)
-        bdos_trace_call(func, cpu, mem);
+    if (m_trace)
+        bdos_trace_call(func, cpu, mem, caller_tag);
 
     // Return a handled byte/word result in rr6 (high word zeroed).
     auto handled = [&](int r) -> bool {
@@ -513,7 +535,7 @@ bool bdos_route(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
     switch (func) {
     // --- Console line input: serviced here (native BDOS won't read) ---
     case 10: // C_READSTR -- read an edited command line
-        return handled(bdos_read_console_line(cpu, mem, caller_seg, param_lo));
+        return handled(bdos_read_console_line(cpu, mem, caller_tag, param_lo));
 
     // --- Drive / DMA state: keep CpmFileSystem in sync with the system ---
     case 13: // DRV_ALLRESET
@@ -550,7 +572,7 @@ bool bdos_route(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
         if (!drive_is_host(drv))
             return false;
         uint16_t off = (func == 27) ? bios_alv_offset(drv) : bios_dpb_offset(drv);
-        cpu.set_reg(6, off ? 0x0B : 0);  // system segment
+        cpu.set_reg(6, off ? m_system_tag : 0);
         cpu.set_reg(7, off);
         return true;
     }
@@ -565,10 +587,10 @@ bool bdos_route(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
     case 15: case 16: case 17: case 19: case 20: case 21:
     case 22: case 23: case 30: case 33: case 34: case 35:
     case 36: case 40: {
-        int drv = fcb_drive(mem, caller_seg, param_lo, fs);
+        int drv = fcb_drive(mem, caller_tag, param_lo, fs);
         if (!drive_is_host(drv))
             return false; // IMAGE drive -> native BDOS -> BIOS sector I/O
-        if (func == 17) s_last_search_host = true;
+        if (func == 17) m_last_search_host = true;
         switch (func) {
         case 15: return handled(fs.file_open(param_lo));
         case 16: return handled(fs.file_close(param_lo));
@@ -604,24 +626,24 @@ bool bdos_route(z8002_device& cpu, CpmFileSystem& fs, uint8_t caller_seg)
     }
 
     case 18: // F_SNEXT -- continue the most recent search on its backend
-        if (s_last_search_host)
+        if (m_last_search_host)
             return handled(fs.file_search_next());
         return false;
 
     case 59: { // PGMLD -- route by the program file's drive
-        uint32_t lpb = (uint32_t(caller_seg) << 16) | param_lo;
-        uint8_t  fcb_seg = mem.read_word(lpb + 0) & 0x7F;
+        uint32_t lpb = (uint32_t(caller_tag) << 16) | param_lo;
+        uint16_t fcb_tag = mem.read_word(lpb + 0);
         uint16_t fcb_off = mem.read_word(lpb + 2);
-        int drv = fcb_drive(mem, fcb_seg, fcb_off, fs);
+        int drv = fcb_drive(mem, fcb_tag, fcb_off, fs);
         if (!drive_is_host(drv))
             return false; // image program -> native BDOS PGMLD
-        return handled(bdos_pgmld(mem, fs, param_lo));
+        return handled(m_loader.load(mem, fs, caller_tag, param_lo));
     }
 
     case 47:  // P_CHAIN -- serviced by the native BDOS, but flag it so the
         // next warm boot preserves a split-I/D program's data mapping (the
         // pending chain command lives in its data segment). See main.cpp.
-        g_chain_pending = true;
+        m_chain_pending = true;
         return false;
 
     default:

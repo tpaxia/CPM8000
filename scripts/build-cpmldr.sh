@@ -32,7 +32,7 @@ SUB=$SRC/makeldr.sub
 OUT=${1:-build/ldr-src}
 
 [ -x "$EMU" ] || { echo "error: $EMU not built -- run 'make emu' first" >&2; exit 1; }
-[ -f build/bios-emu/cpm.sys ] || { echo "error: build/bios-emu/cpm.sys missing -- run 'make bios-emu' first" >&2; exit 1; }
+[ -f build/bios-emu-z8001/cpm.sys ] || { echo "error: build/bios-emu-z8001/cpm.sys missing -- run 'make bios-emu-z8001' first" >&2; exit 1; }
 
 # Sources makeldr.sub needs. lbiosasm.8kn (LOADER .equ 1) pulls in the same
 # Loader BIOS sources (stock, from SRC). lbiosasm.8kn (LOADER .equ 1) .inputs
