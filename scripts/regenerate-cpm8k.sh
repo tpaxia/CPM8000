@@ -19,8 +19,6 @@ cd "$ROOT"
 OUT=${1:-src/cpm8k}
 IMGDIR=distribution/CPM_8000_1.1
 IMAGES="REL11A REL11B REL11C GAMES MISC11 TEXT11"
-export DISKDEFS=src/diskdefs_m20.mame
-
 command -v cpmcp >/dev/null 2>&1 || { echo "error: cpmtools (cpmcp) not found -- brew install cpmtools" >&2; exit 1; }
 for i in $IMAGES; do
 	[ -f "$IMGDIR/$i.IMG" ] || { echo "error: missing image $IMGDIR/$i.IMG" >&2; exit 1; }
@@ -29,9 +27,13 @@ done
 echo "== Step 1: regenerate pristine tree -> $OUT  (from $IMGDIR) =="
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/cpm8k-regen.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT INT TERM
+cp src/diskdefs_m20.mame "$TMP/diskdefs"
 
 for i in $IMAGES; do
-	cpmcp -f m20 "$IMGDIR/$i.IMG" '0:*' "$TMP/"
+	(
+		cd "$TMP"
+		cpmcp -f m20 "$ROOT/$IMGDIR/$i.IMG" '0:*' .
+	)
 done
 echo "extracted $(ls "$TMP" | wc -l | tr -d ' ') files from $(set -- $IMAGES; echo $#) images"
 

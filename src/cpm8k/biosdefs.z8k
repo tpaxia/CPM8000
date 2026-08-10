@@ -1,0 +1,133 @@
+;************ biosdefs.z8k **************************
+;*
+;*	Assembly language definitions for
+;*	P-CP/M (tm) BIOS
+;*
+;* 821013 S. Savitzky (Zilog) -- created.
+;*
+
+
+;****************************************************
+;*
+;* System Calls and Trap Indexes
+;*
+;****************************************************
+
+XFER_SC .equ	1
+BIOS_SC	.equ	3
+BDOS_SC	.equ	2
+MEM_SC	.equ	1
+DEBUG_SC .equ	0
+
+;* the traps use numbers similar to those in the
+;* 68K version of P-CP/M
+
+NTRAPS	.equ	48	;total number of traps
+SC0TRAP .equ	32	;trap # of system call 0
+
+		    ;Z8000 traps
+EPUTRAP	.equ	1	;EPU (floating pt. emulator)
+SEGTRAP	.equ	2	;segmentation (68K bus err)
+NMITRAP	.equ	0	;non-maskable int.
+PITRAP	.equ	8	;priviledge violation
+		    ;Interrupts, etc.
+TRACETR	.equ	9	; trace
+
+
+;****************************************************
+;*
+;* C Stack frame equates
+;*
+;*	A C stack frame consists of the PC on top,
+;*	followed by the arguments, leftmost argument first.
+;*
+;*	The caller adjusts the stack on return.
+;*	Returned value is in r7 (int) or rr6 (long)
+;*
+;****************************************************
+
+PCSIZE	.equ	2		;PC size non-segmented
+INTSIZE	.equ	2		;INT data type size
+LONGSIZE .equ	4		;LONG data type size
+
+ARG1	.equ	PCSIZE		;integer arguments
+ARG2	.equ	ARG1+INTSIZE
+ARG3	.equ	ARG2+INTSIZE
+ARG4	.equ	ARG3+INTSIZE
+ARG5	.equ	ARG4+INTSIZE
+
+
+;****************************************************
+;*
+;* Segmented Mode Operations
+;*
+;*	NOTE:   segmented indirect-register operations
+;*		can be done by addressing the low half
+;*		of the register pair.
+;*
+;****************************************************
+
+SEG	.MACRO		; START segmented mode
+			; r0 destroyed.
+
+	ldctl	r0,FCW
+	set	r0,#15
+	ldctl	FCW,r0
+
+	.ENDM
+
+
+NONSEG	.MACRO		; END segmented mode
+			; r0 destroyed.
+
+	ldctl	r0,FCW
+	res	r0,#15
+	ldctl	FCW,r0
+
+	.ENDM
+
+
+scall	.MACRO		;(segaddr)	segmented CALL
+
+	.word	05F00h
+	.long	?1
+
+	.ENDM
+
+
+sscall	.MACRO		;(|segaddr|)	short segmented CALL
+
+	.word	05F00h
+	.word	?1
+
+	.ENDM
+
+
+;****************************************************
+;*
+;* System Call Trap Handler Stack Frame
+;*
+;****************************************************
+
+cr0	.equ  0		;WORD	caller r0
+cr1	.equ  cr0+2	;WORD	caller r1
+cr2	.equ  cr1+2 	;WORD	caller r2
+cr3	.equ  cr2+2 	;WORD	caller r3
+cr4	.equ  cr3+2 	;WORD	caller r4
+cr5	.equ  cr4+2 	;WORD	caller r5
+cr6	.equ  cr5+2 	;WORD	caller r6
+cr7	.equ  cr6+2 	;WORD	caller r7
+cr8	.equ  cr7+2 	;WORD	caller r8
+cr9	.equ  cr8+2 	;WORD	caller r9
+cr10	.equ  cr9+2 	;WORD	caller r10
+cr11	.equ  cr10+2 	;WORD	caller r11
+cr12	.equ  cr11+2 	;WORD	caller r12
+cr13	.equ  cr12+2 	;WORD	caller r13
+nr14	.equ  cr13+2	;WORD	normal r14
+nr15	.equ  nr14+2	;WORD	normal r15
+scinst	.equ  nr15+2	;WORD	SC instruction
+scfcw	.equ  scinst+2	;WORD	caller FCW
+scseg	.equ  scfcw+2	;WORD	caller PC SEG
+scpc	.equ  scseg+2	;WORD	caller PC OFFSET
+FRAMESZ .equ scpc+2
+

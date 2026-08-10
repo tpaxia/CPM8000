@@ -1,0 +1,121 @@
+;*** fpedep.z8k -- fpe system-dependent half (memory map/transfer helpers).
+;*** The gettext/getmem/putmem bodies here were transcribed from the
+;*** distribution fpedep.o disassembly (the hand-optimized variant that
+;*** uses ldk/xor/clrb); with biosdefs.z8k this reproduces the object
+;*** content byte-for-byte. Assemble with asz8k -> xcon.
+;*************************************************
+;** Change history --
+;** 30mar81: Broken off from general interface.
+;** 30mar81: Set up for Zilog ZLAB 8000
+;** 09may81: Tell cpu when state is free.
+;** 19jan82: Allow segmented users.
+;** 21jan82: Took out references to freecpu and needcpu
+;** 15feb82: Dummy out need/free cpu.
+;** 13may82: Comment out references to setfp and resfp
+;*************************************************
+
+	.title	"sysdep MODULE"
+	.input	"biosdefs.z8k"
+
+;*************************************************
+;** SAVED CPU STATE --
+;** is specified by the following "constants."
+;** Offset stapcsg must point to the word preceding
+;** the saved PC offset, EVEN FOR NONSEGMENTED
+;** OPERATION.
+;*************************************************
+__data	.sect
+	.GLOBAL	stareg,staevnt,stafcw,stapcsg
+stareg	.WORD	 4	;offset of r0
+staevnt	.WORD	36	;saved 1st word
+stafcw	.WORD	38	;saved fcw
+stapcsg	.WORD	40	;seg word of PC
+
+;*************************************************
+;** ADDRESSES --
+;** as input parameters to the routines below are
+;** delivered in register pairs (i.e. as though
+;** segmented).  The high-order word of such an
+;** address is undefined when the process running
+;** in that address space runs in nonsegmented
+;** mode.
+;*************************************************
+	.eject
+;*************************************************
+;** GET NEXT INSTRUCTION WORD -- 
+;** Input:
+;**	rr6 = saved PC -- seg # must be fixed for
+;**		nonseg users
+;** Output:
+;**	r3  = next instruction word
+;*************************************************
+__data	.sect
+gttxt:	.WORD	0
+__text	.sect
+	.GLOBAL gettext
+gettext:
+	pushl	@r15,rr6
+	ld	r7,#gttxt
+	ldk	r5,#0
+	xor	r2,r2
+	xor	r3,r3
+	sc	#MEM_SC
+	ldl	rr4,rr6
+	popl	rr6,@r15
+	pushl	@r15,rr4
+	ldk	r5,#5
+	xor	r2,r2
+	xor	r3,r3
+	sc	#MEM_SC
+	popl	rr4,@r15
+	xor	r2,r2
+	ldk	r3,#2
+	sc	#MEM_SC
+	ld	r3,gttxt
+	clrb	rl2
+	ret
+
+	.GLOBAL getmem
+getmem:
+	push	@r15,r3
+	pushl	@r15,rr4
+	ldk	r5,#4
+	xor	r2,r2
+	xor	r3,r3
+	sc	#MEM_SC
+	popl	rr4,@r15
+	pushl	@r15,rr6
+	ldl	rr6,rr4
+	ldk	r5,#0
+	xor	r2,r2
+	xor	r3,r3
+	sc	#MEM_SC
+	ldl	rr4,rr6
+	popl	rr6,@r15
+	pop	r3,@r15
+	xor	r2,r2
+	sc	#MEM_SC
+	ret
+
+	.GLOBAL putmem
+putmem:
+	push	@r15,r3
+	pushl	@r15,rr4
+	ldk	r5,#0
+	xor	r2,r2
+	xor	r3,r3
+	sc	#MEM_SC
+	popl	rr4,@r15
+	pushl	@r15,rr6
+	ldl	rr6,rr4
+	ldk	r5,#4
+	xor	r2,r2
+	xor	r3,r3
+	sc	#MEM_SC
+	ldl	rr4,rr6
+	popl	rr6,@r15
+	pop	r3,@r15
+	ldk	r2,#0
+	sc	#MEM_SC
+	ret
+

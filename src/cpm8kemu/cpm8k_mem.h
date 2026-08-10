@@ -16,12 +16,38 @@ static constexpr int NUM_SEGS = 128;
 static constexpr uint16_t FCW_SEG = 0x8000;
 static constexpr uint16_t FCW_S_N = 0x4000;
 
+// Logical memory interface used by the hosted CP/M services.  Address
+// translation belongs to the concrete machine: Z8001 uses segmented I/D
+// maps, while Z8002 uses a non-segmented address space.
+class CpmAddressSpace {
+public:
+    virtual ~CpmAddressSpace() = default;
+    virtual uint8_t read_byte(uint32_t addr, int space = 0) const = 0;
+    virtual uint16_t read_word(uint32_t addr, int space = 0) const = 0;
+    virtual void write_byte(uint32_t addr, uint8_t val, int space = 0) = 0;
+    virtual void write_word(uint32_t addr, uint16_t val, int space = 0) = 0;
+    virtual void configure_program(uint16_t, uint16_t) {}
+
+    void read_block(uint32_t addr, uint8_t* dst, size_t len) const {
+        for (size_t i = 0; i < len; ++i)
+            dst[i] = read_byte(addr + i);
+    }
+    void write_block(uint32_t addr, const uint8_t* src, size_t len) {
+        for (size_t i = 0; i < len; ++i)
+            write_byte(addr + i, src[i]);
+    }
+    void clear_block(uint32_t addr, size_t len) {
+        for (size_t i = 0; i < len; ++i)
+            write_byte(addr + i, 0);
+    }
+};
+
 // Segmented memory with separate instruction/data address spaces.
 // Models a Z8001 MMU with dual mapping tables (I-space and D-space)
 // per segment, plus separate system/normal mode tables for segment 0
 // (matching real Z8001 MMU behavior).
 // Not a z8000_memory_bus — SegBus adapters provide the bus interface.
-class SegmentedMemory {
+class SegmentedMemory : public CpmAddressSpace {
 public:
     SegmentedMemory() {
         m_data = new uint8_t[MEM_SIZE];
@@ -97,17 +123,17 @@ public:
 
     // Convenience helpers — default space=0 (data) keeps all existing callers
     // (BDOS, file system) working unchanged.
-    uint8_t read_byte(uint32_t addr, int space = 0) const {
+    uint8_t read_byte(uint32_t addr, int space = 0) const override {
         return m_data[translate(addr, space)];
     }
-    uint16_t read_word(uint32_t addr, int space = 0) const {
+    uint16_t read_word(uint32_t addr, int space = 0) const override {
         uint32_t phys = translate(addr, space) & ~1;
         return (uint16_t(m_data[phys]) << 8) | m_data[phys + 1];
     }
-    void write_byte(uint32_t addr, uint8_t val, int space = 0) {
+    void write_byte(uint32_t addr, uint8_t val, int space = 0) override {
         m_data[translate(addr, space)] = val;
     }
-    void write_word(uint32_t addr, uint16_t val, int space = 0) {
+    void write_word(uint32_t addr, uint16_t val, int space = 0) override {
         uint32_t phys = translate(addr, space) & ~1;
         m_data[phys] = (val >> 8) & 0xFF;
         m_data[phys + 1] = val & 0xFF;

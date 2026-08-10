@@ -5,10 +5,9 @@
 # 35 cylinders, 2 heads, 16 sectors/track, 256 bytes/sector
 # DPB from bios.c dpb1: spt=32 bsh=4 blm=15 exm=1 dsm=134 drm=63 off=3
 #
-# Usage: append to system diskdefs, then use -f <format>
-#   cat diskdefs/diskdefs >> $(cpmls -h 2>&1 | grep -o '/.*diskdefs' || echo /opt/homebrew/share/diskdefs)
-#   cpmls -f m20 distribution/cpm_m20.img
-#   cpmls -f ibm-3740 distribution/CPM_8000_1.1/8K_1OF4.IMG
+# Usage: copy this file to ./diskdefs, then use -f m20.
+#   cp src/diskdefs_m20.mame /tmp/diskdefs
+#   (cd /tmp && cpmls -f m20 /path/to/REL11A.IMG)
 diskdef m20
   seclen 256
   tracks 70
@@ -18,5 +17,3 @@ diskdef m20
   boottrk 3
   os 2.2
 end
-# Distribution images (CPM_8000_1.1/*.IMG) are standard IBM 3740 format:
-#   cpmtools -f ibm-3740 (77 tracks, 26×128 sectors, 6:1 skew)

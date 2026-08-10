@@ -33,7 +33,7 @@ SUB=scripts/fpe.sub
 OUT=${1:-build/fpe}
 
 [ -x "$EMU" ] || { echo "error: $EMU not built -- run 'make emu' first" >&2; exit 1; }
-[ -f build/bios-emu/cpm.sys ] || { echo "error: build/bios-emu/cpm.sys missing -- run 'make bios-emu' first" >&2; exit 1; }
+[ -f build/bios-emu-z8001/cpm.sys ] || { echo "error: build/bios-emu-z8001/cpm.sys missing -- run 'make bios-emu-z8001' first" >&2; exit 1; }
 
 DRIVE=$(mktemp -d "${TMPDIR:-/tmp}/cpm8k-fpe.XXXXXX")
 trap 'rm -rf "$DRIVE"' EXIT INT TERM

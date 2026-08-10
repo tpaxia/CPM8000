@@ -1,0 +1,4283 @@
+;emulator MODULE
+	.input	"biosdefs.z8k"
+
+;*************************************************
+;** 10dec80: modified for emulator.
+;** 21jan81: move fp reg's to top of work.
+;** 18feb81: update error and compare flags.
+;** 30mar81: system error word added to (wp).
+;** 09may81: mem adrs added.
+;** 28jan82: size of stack buffer for memory
+;**	operands is parameterized.
+;** 28jan82: errors on last op add to config. reg.
+;** 11feb82: reset name of NORM/WARN mode now that
+;**	WARN is out of st'd; set size of mem buf
+;**	to 20.
+;** 15feb82: No more unnormals.
+;** 23feb82: Add IODI for Fcpz.
+;** 02mar82: Move MODE and TRAP byte in WRKCNTL.
+;*************************************************
+
+;*************************************************
+;** Sacred registers: work and stack ptrs.
+;*************************************************
+__data	.sect
+
+epuwp:
+wpreg0:		.block	10
+wpreg1:		.block	10
+wpreg2:		.block	10
+wpreg3:		.block	10
+wpreg4:		.block	10
+wpreg5:		.block	10
+wpreg6:		.block	10
+wpreg7:		.block	10
+wpcregs:
+wpfig:		.block	4
+wpctrp:		.block	4
+wpflgs:		.block	4
+wpcntl:		.block	4
+wpdst:		.block	4
+		.block	4
+		.block	4
+wpsrc:		.block	4
+		.block	4
+		.block	4
+wpop1:		.block	2
+wpop2:		.block	2
+wpdadr:		.block	4
+wpsadr:		.block	4
+wpstate:	.block	4
+wpserr:		.block	4
+wpmad:		.block	4
+
+temp:		.block	64
+
+;*************************************************
+;** 10dec80: modified for emulator.
+;** 12jan81: seg/nonseg
+;** 28jan81: bug fixes (format,tidyflags...)
+;** 01feb81: more durned bugs with rounding.
+;** 15feb82: no more unnormal 0.
+;** 23feb82: force 0 on pure cancellation.
+;** 19mar82: changed donone to dotrap which delivers NNaN if necessary
+;*************************************************
+__data	.sect
+	.GLOBAL actadd
+actadd:	.word	addno,addsrc0,ressrc,resnsrc,adddst0,addno,ressrc,resnsrc
+	.word	resdst,resdst,addinf,resnsrc,resndst,resndst,resndst,resprec
+	.word	dotrap
+
+__text	.sect
+	.GLOBAL resinv  		; LABEL
+	.GLOBAL   Fadd	 		; LABEL
+	.GLOBAL   addinf  		; LABEL
+	.GLOBAL   addsrc0 		; LABEL
+	.GLOBAL   adddst0 		; LABEL
+	.GLOBAL   addno   		; LABEL
+	.GLOBAL   Fsub    		; PROCEDURE ENTRY
+
+;*************************************************
+;** The big difference between +/- is that the
+;** latter reverses the source at the outset.
+;*************************************************
+Fsub:
+	or	r4,#03010h
+	call	setup
+	xor	r6,#08000h	;reverse src sign
+	jr	Fsub1
+Fadd:
+	or	r4,#03010h
+	call	setup
+Fsub1:
+	ld	r3,actadd(r1)
+	call	@r3
+	call	delivery
+	ret
+
+;*************************************************
+;** INF +/- INF is valid if mode is affine and
+;** the operands have like signs.
+;** Tricky use of flags:
+;**	V = 0; C = don't care
+;**	Z = if projective; S = XOR signs.
+;** Thus 'greater than' means the result is
+;** valid, namely the operand in r6-11.
+;*************************************************
+addinf:
+	resflg	v		;must be 0
+	ld	r1,r13(#96)	;dst sign
+	xor	r1,r6		;S = xor(signs)
+;#Fsub%&@..Segmented Inefficiency..*+'&?@Fsub#'[~_)(|#Fsub
+	lda	r3,r13(#93)	;modes byte
+	bitb	@r3,#0	;z = if(proj)
+	jp	le,resinv
+	ret
+
+;*************************************************
+;** Need only get dst and jump to where add has
+;** just occurred.
+;*************************************************
+addsrc0:
+;#Fsub%&@..Segmented Inefficiency..*+'&?@Fsub#'[~_)(|#Fsub
+	lda	r7,r13(#96)
+	ldm	r6,@r7,#6
+	jr	adddst0
+
+
+;*************************************************
+;** Src (negated in subtract) is in r6-11.
+;** Dst will be loaded to r0-5.
+;**
+;** Want <sign, exp, digits> of apparently larger
+;** operand in r6-11 so that smaller can be shifted
+;** in r2-5.
+;** Use custom shifting routine rather than
+;** shiftdigs since it's inconvenient
+;** to have smaller op in r8-11.
+;*************************************************
+addno:
+
+;*************************************************
+;** DANGER: the format&flags longword must be pop-
+;** ped from the stack later.  There are three
+;** cases: add mag, sub mag to non0, and sub to 0.
+;*************************************************
+	pushl	@r15,rr4	;save format, flags
+
+;#Fsub%&@..Segmented Inefficiency..*+'&?@Fsub#'[~_)(|#Fsub
+	lda	r3,r13(#96)
+	ldm	r0,@r3,#6	;dst op
+ 
+	xorb	rh0,rh6		;add/sub magnitude?
+	sub	r1,r7
+	jr	z,Fsub15		;quick: exp
+	sbcb	rl0,rl6		;hi order exp
+
+;*************************************************
+;** If exp6 > exp1 then larger op in r6-11; else
+;** must swap (and restore exp) before shift.
+;*************************************************
+	jr	mi,Fsub10
+	ldl	rr6,r13(#96)
+	ex	r11,r5
+	ex	r10,r4
+	ex	r9, r3
+	ex	r8, r2
+	jr	Fsub11
+Fsub10:
+	neg	r1
+Fsub11:
+
+	cp	r1,#66		;huge shift?
+	jr	ule,Fsub14
+	ld	r1,#66		;no overshift
+
+;*************************************************
+;** OPTIMIZE this prealignment loop.
+;*************************************************
+Fsub14:
+	subb	rl0,rl0	;clear c
+	rrc	r2
+	rrc	r3
+	rrc	r4
+	rrc	r5
+	rrcb	rh1
+	tccb	c,rh1	;pick up sticky
+	decb	rl1	;recall it's <67 
+	jr	nz,Fsub14
+
+;*************************************************
+;** The operands are aligned.  Now determine +/-
+;** and go:
+;**	rh0 = xor(signs); rh1 = 0.
+;**	rl1 = rnd bits from shift.
+;**	rr2,rr4 are to have smaller op.
+;*************************************************
+Fsub15:
+	bitb	rh0,#7	;add or sub?
+	jr	nz,Fsub30
+ 
+;*************************************************
+;** Add magnitude...
+;*************************************************
+	addl	rr10,rr4
+	adc	r9,r3
+	adc	r8,r2	;save C while restoring
+	popl	rr4,@r15	;format and flags
+	ldb	rl5,rh1
+	jr	nc,Fsub52
+
+;*************************************************
+;** shifdigs with input 1 from r0 will right shift
+;** the number -- with C bit in from lift; a bit
+;** tricky?
+;*************************************************
+	ldk	r0,#1
+	call	shiftdigs
+	add	r7,#1	;don't carry into rh6
+	adcb	rl6,rh0	;preserved by shiftdigs
+	jr	Fsub52
+
+
+;*************************************************
+;** Subtract magnitude, watching for normalization.
+;** rh1=rnd bits and rl1=0 after count above.
+;** Rather than risk a negative result and a pain-
+;** fully wide 2's complementation, compare and
+;** then subtract.
+;*************************************************
+Fsub30:
+	cpl	rr8,rr2	;usually > after align
+	jr	ugt,Fsub33	;ok to subtract
+	jr	ult,Fsub31	;must swap...
+
+	cpl	rr10,rr4 ;low half
+	jr	ugt,Fsub33
+	jr	eq,Fsub37	;src = dst
+
+Fsub31:
+	ex	r8,r2	;swap numbers, and...
+	ex	r9,r3
+	ex	r10,r4
+	ex	r11,r5
+	xorb	rh6,#080h ;...reverse sign
+
+Fsub33:
+	subb	rl1,rh1
+	sbc	r11,r5
+	sbc	r10,r4
+	popl	rr4,@r15	;formats and flags
+	ldb	rl5,rl1	;save rounding bits
+	sbc	r9,r3
+	sbc	r8,r2
+ 
+;*************************************************
+;** Result of subtract is always > 0.
+;** Normalize it and finish up...
+;*************************************************
+	call	normdigs
+ 	jr	Fsub52
+
+;*************************************************
+;** When subtract magnitude to zero must tweak
+;** sign: it's + unless rounding toward -INF.
+;** Remember the flags and formats on stack.
+;** And be sure to force zero.
+;*************************************************
+Fsub37:
+	popl	rr4,@r15	;formats and flags
+
+	subl	rr10,rr10	;force +0
+	ldl	rr8,rr10
+	ldl	rr6,rr8
+
+	ld	r1,#((0Ch<<8)|00Ch)
+;#Fsub%&@..Segmented Inefficiency..*+'&?@Fsub#'[~_)(|#Fsub
+	lda	r3,r13(#93)	;modes byte
+	andb	rh1,@r3
+	cpb	rh1,rl1
+	jr	ne,Fsub57	;it's +0
+	setb	rh6,#7
+	jr	Fsub57	;it's -0
+
+;*************************************************
+;** Check for exceptions and return.
+;*************************************************
+adddst0:
+Fsub52:
+	call	under
+	call	round
+	call	over
+Fsub57:
+	ret
+
+;*************************************************
+;** 10dec80 -- modified for emulator
+;** 12jan81 -- non/segmented version
+;** 15feb81: no more unnorm 0.
+;** 19mar82: changed donone to dotrap which delivers NNaN if necessary
+;*************************************************
+__data	.sect
+	.GLOBAL actmul
+actmul:
+	.word	mulno,   ressrc,  ressrc,  resnsrc,
+	.word	resdst,  ressrc,  resinv,  resnsrc,
+	.word	resdst,  resinv,  ressrc,  resnsrc,
+	.word	resndst, resndst, resndst, resprec,
+	.word	dotrap
+  
+__text	.sect
+	.GLOBAL dotrap 		; LABEL
+	.GLOBAL  mulno 		; LABEL
+	.GLOBAL  Fmul  		; PROCEDURE  ENTRY
+Fmul:
+
+	or	r4,#03010h
+	call	setup
+
+;*************************************************
+;** Process result sign first -- saved on stack
+;** for later insertion.
+;*************************************************
+	ld	r0,r13(#96)
+	xor	r0,r6
+	push	@r15,r0
+
+	ld	r3,actmul(r1)
+	call	@r3
+
+;*************************************************
+;** Stuff sign
+;*************************************************
+	pop	r0,@r15
+	ldb	rh6,rh0      ;place sign
+	call	delivery
+	ret
+
+;*************************************************
+;** Multiply numbers, preserving format & adrs's
+;** General layout:
+;**	rq0 = quad product
+;**	rr4 = src longword
+;**	rr6 = dst longword
+;**	rq8 = src, gradually replaced by product
+;**	rr12 = lowest bits
+;*************************************************
+mulno:
+
+;*************************************************
+;** Save r4=format & r5=flags
+;** Recompute sign for rounding later.
+;** Compute exp and save sign/exp.
+;** Assume (1.x) * (1.y) >= 2.0.
+;*************************************************
+	pushl	@r15,rr4
+	ldl	rr0,r13(#96)	;top of dst op
+	xorb	rh6,rh0		;sign again
+	addl	rr0,rr6		;exp with x bias
+	subl	rr0,#000003ffeh	;unbias
+	ldb	rh0,rh6		;replace sign
+	pushl	@r15,rr0		;save sign, exp
+ 
+;*************************************************
+;** Start with m'cand (src) in rq8, junk in r0-7.
+;** Strategy:
+;**                              ..src2....dst2..
+;**                      ..src2....dst1..
+;**                      ..src1....dst2..
+;**            + ..src1....dst1..
+;**        --------------------------------------
+;**              ..pro1....pro2....pro3....pro4..
+;**        -->   ..pro1....pro2..|gr...sticky....
+;**
+;** where g=guard r=round.  Collect all rounding
+;** information in one word atop stack
+;** (could use r12 if running nonsegmented only.)
+;**
+;** Weed out 32 by 32 cases for speed:
+;**     if (srclo=dstlo=0) push 0 rounding bits
+;**     on stack and jump to srchi*dsthi.
+;** Weed out 32 by 64 cases, too.
+;*************************************************
+	ldl	rr6,r13(#96+8) ;get dst2
+	testl	rr10		;check src2
+	jr	nz,Fmul21		;no speed
+
+	push	@r15,#0		;fake rnd bits
+	ldl	rr4,rr8		;frees rr8
+	subl	rr8,rr8
+	testl	rr6		;check dst2
+	jr	z,Fmul25		;32 by 32
+	jr	Fmul24		;32 by 64
+
+Fmul21:
+	;long case 64 by 64
+	ldl	rr4,rr10	;rr10 free hence
+	calr	umultl		;pro34
+	or	r3,r3		;stickies
+	tcc	nz,r2
+	push	@r15,r2
+
+	ldl	rr10,rr0
+	ldl	rr6,r13(#96+4)	;dst1
+	calr	umultl		;pro23
+	ldl	rr4,rr8		;srclo-free rr8
+	ldl	rr8,rr0
+	sub	r6,r6	;to propagate carry
+	addl	rr10,rr2
+	adc	r9,r6
+	adc	r8,r6
+
+	ldl	rr6,r13(#96+8)	;dst2
+Fmul24:
+	calr	umultl		;pro23
+	addl	rr2,rr10	;hold C ....
+
+;*************************************************
+;** Fix up rounding bits for later or into r5.
+;*************************************************
+	or	r3,@r15		;stickies
+	tcc	nz,r2
+	orb	rl2,rl2
+	tccb	nz,rh2
+	ld	@r15,r2		;rounding bits
+
+	adc	r9,r1		;resume addition
+	adc	r8,r0		;save c out
+	ldl	rr10,rr8	;pro2
+	ldk	r9,#0
+	ld	r8,r9
+	adc	r9,r9		;pick up c
+
+;*************************************************
+;** This is re-entry for short mults.
+;*************************************************
+Fmul25:
+	ldl	rr6,r13(#96+4)	;dst1
+	calr	umultl		;pro12
+	addl	rr10,rr2
+	adc	r9,r1
+	adc	r8,r0		;never a C-out
+
+	pop	r0,@r15		;rnd bits in rh0
+
+;*************************************************
+;** Retrieve exp and fix possible lead 0.
+;** We assumed 1.xxx times 1.yyyy would be
+;** > 2.0000
+;*************************************************
+	popl	rr6,@r15	;sign and exponent
+	bit	r8,#15
+	jr	nz,Fmul30
+
+	addb	rl0,rl0
+	adc	r11,r11
+	adc	r10,r10
+	adc	r9,r9
+	adc	r8,r8
+
+	subb	rl0,rl0	;to propagate borrow
+	sub	r7,#1
+	sbcb	rl6,rl0
+Fmul30:
+	popl	rr4,@r15		;formats&flags
+	orb	rl5,rh0		;round bits
+	 
+	call	under
+	call	round
+	call	over
+	ret
+
+;*************************************************
+;** Unsigned 32*32 multiply...
+;**	rr4,rr6 = operands; rq0 = result
+;** No fix needed if result is 0.
+;*************************************************
+umultl:
+	ldl	rr2,rr6
+	multl	rq0,rr4
+	ret	z
+
+	jr	mi,Fmul1	;exactly 1 operand is neg
+
+	bit	r4,#15
+	ret	z
+
+	addl	rr0,rr6
+	jr	Fmul2
+Fmul1:
+	bit	r4,#15
+	jr	z,Fmul2
+	addl	rr0,rr6
+	ret
+Fmul2:
+	addl	rr0,rr4
+	ret
+
+;*************************************************
+;** 16dec80: Modified for emulator.
+;** 12jan81: Mod for non/segmented.
+;** 15feb82: no more unnorm 0.
+;** 19mar82: changed donone to dotrap which delivers NNaN if necessary
+;*************************************************
+__data	.sect
+	.GLOBAL actdiv
+actdiv:						; ARRAY [* WORD] := [
+	.word	divno,   divdz,   reszero, resnsrc
+	.word	reszero, resinv,  reszero, resnsrc
+	.word	resdst,  resdst,  resinv,  resnsrc
+	.word	resndst, resndst, resndst, resprec
+	.word	dotrap
+
+__text	.sect
+	.GLOBAL resinv 			; LABEL
+	.GLOBAL   divno  		; LABEL
+	.GLOBAL   divdz  		; LABEL
+	.GLOBAL   Fdiv   		; PROCEDURE ENTRY
+Fdiv:
+	or	r4,#03010h
+	call	setup
+
+;*************************************************
+;** Save result sign on stack for later stuffing.
+;*************************************************
+	ld	r0,r13(#96)
+	xor	r0,r6
+	push	@r15,r0
+
+	ld	r3,actdiv(r1)
+	call	@r3
+
+;*************************************************
+;** Stuff sign.
+;*************************************************
+	pop	r0,@r15
+	ldb	rh6,rh0
+	call	delivery
+	ret
+
+;*************************************************
+;** Divide two numbers -- which amounts to
+;** setting up the nonrestoring routine.
+;*************************************************
+divno:
+	bit	r8,#15		;check for normal
+	jp	z,resinv	;invalid if unnor
+
+	pushl	@r15,rr4		;save format, ers
+;#Fdiv%&@..Segmented Inefficiency..*+'&?@Fdiv#'[~_)(|#Fdiv
+	lda	r3,r13(#96)
+	ldm	r0,@r3,#6	;get dst
+
+;*************************************************
+;** Recompute sign and compute exponent.
+;** Add back bias as though dst >= src,
+;** in which case 64 quotient bits are required
+;** of norestore; if dst < src must get 65 bits
+;** and fix new exponent in rr0.
+;*************************************************
+	xorb	rh6,rh0
+	subl	rr0,rr6
+	addl	rr0,#000003FFFh
+	ld	r7,#64	;tentative quo bit count
+	cpl	rr2,rr8	;compare dst vs src
+	jr	ne,Fdiv2
+	cpl	rr4,rr10
+Fdiv2:
+	jr	uge,Fdiv3
+;prepare for 0 leading q bit
+	inc	r7
+	subl	rr0,#1
+Fdiv3:
+	ldb	rh0,rh6		;place sign
+	pushl	@r15,rr0		;save exp
+	pushl	@r15,rr12	;r13
+
+	ld	r0,r7	;count in its place
+	ldl	rr6,rr4	;dividend to rq4
+	ldl	rr4,rr2
+	ldl	rr2,rr8	;divisor to rr2,rr12
+	ldl	rr12,rr10
+
+;*************************************************
+;** Send nonrestore:
+;**	r0   -- count of quo bits
+;**	rq4 -- dividend
+;**	rr2,rr12 -- divisor
+;*************************************************
+	call	nonrestore
+;*************************************************
+;** Return with:
+;**	rq4 = (implicitly) signed remainder
+;**	rq8 = quotient
+;**	rr2,rr12 = divisor
+;**	Sign of remainder is NOT lowest bit of
+;**	quotient;  epilog adds divisor to neg
+;**	rem.
+;*************************************************
+	bit	r11,#0  ;NOT(sign of rem)
+	jr	nz,Fdiv10
+; rem += divr to reconcile deficit 
+	addl	rr6,rr12
+	adc	r5,r3
+	adc	r4,r2
+Fdiv10:
+	call	remvsdiv	;to set rl5
+
+;*************************************************
+;** Recall format to r4 and OR the error word into
+;** r5.
+;*************************************************
+	popl	rr12,@r15
+	popl	rr6,@r15		;sign, exp
+	popl	rr4,@r15		;format,flags
+	orb	rl5,rl0		;set r_vs_d
+ 
+	call	under
+	call	round
+	call	over
+	ret
+ 
+;*************************************************
+;** On divide by zero set flag and load inf.
+;*************************************************
+divdz:
+	setb	rh5,#3	;division by zero
+	jp	resinf
+
+;*************************************************
+;**	r0  = 16 bit magnitude count of q digits
+;**	rr2,rr12  = divisor
+;**	rq4  = dividend cum remainder
+;*************************************************
+	.GLOBAL  nonrestore  		; PROCEDURE ENTRY
+;*************************************************
+;** Nonrestoring integer division has several
+;** interesting properties:
+;** 1)  At any step, if the last q bit was a
+;**	1, then subtract; else add.
+;** 2)  After unsigned subtraction of divisor
+;**	from dividend, carry=1 if and only if
+;**	the dividend<divisor.
+;**	ergo:  q bit = not-carry.
+;** 3)  After addition the problem is to decide
+;**	whether a previous loss has been
+;**	vindicated.  this is the case, and the
+;**	q bit is 1, if and only if carry=1 and
+;**	the msb of the previous dividend was 1.
+;**	'previous' means before the last left
+;**	shift of the dividend.
+;** 4)  After addition may have dvd (1)00xxxxx
+;**	where the (1) is carried out into the
+;**	high bit of r8.  on the next step, which
+;**	must be a subtract, ignore the apparent
+;**	deficit and borrow.
+;** 5)  Related to (3 & 4), saving the dividend msb
+;**	after it's shifted into carry is a pain.
+;**	we keep it in the q msb, itself scheduled
+;**	for replacement in the 'current' step.
+;**	the msb need not be saved on last step.
+;*************************************************
+nonrestore:
+
+	subl	rr10,rr10	;0 -> rq8 for quo
+	ldl	rr8,rr10
+	jr	nonre2
+ 
+nonre1:
+	bit	r11,#0	;z -> add; nz -> sub
+	jr	nz,nonre2
+
+	addl	rr6,rr12  ;dvd += dvr
+	adc	r5,r3
+	adc	r4,r2
+;test last dvd msb in q msb
+	jr	nc,nonre3
+	bit	r8,#15
+	jr	nz,nonre3 
+;clear q bit unless super c-out
+	comflg	c
+	jr	nonre3
+ 
+nonre2:
+	subl	rr6,rr12
+	sbc	r5,r3
+	sbc	r4,r2
+	bit	r8,#15 ;dvd may be (1)00...
+	jr	nz,nonre3
+	comflg	c
+ 
+nonre3:
+	adc	r11,r11 ;c shifted into q
+	adc	r10,r10
+	adc	r9,r9
+	adc	r8,r8
+ 
+	dec	r0  ;counter...
+	ret	z
+ 
+	addl	rr6,rr6
+	adc	r5,r5
+	adc	r4,r4  ;vip bit -> c
+	adc	r8,r8  ;c -> q-msb, by next trick
+	rr	r8
+	jr	nonre1
+
+;*************************************************
+;** Set rl0 based on horrendous comparison:
+;** 2*rem (rq4) vs divisor (rr2,rr12)
+;** Use rl0 rather than rl5, which is part of the
+;** computed remainder.
+;*************************************************
+	.GLOBAL remvsdiv 		; PROCEDURE ENTRY
+remvsdiv:
+	ldb	rl0,#0C0h	;assume >
+	bit	r4,#15
+	ret	nz   ;velly big remainder
+
+;easier way -- 2x rem vs divisor
+	addl	rr6,rr6
+	adc	r5,r5
+	adc	r4,r4
+ 
+;wide compare
+	cpl	rr4,rr2
+	jr	ne,RvsD2
+	cpl	rr6,rr12
+RvsD2:
+	jr	ugt,RvsD5	;just finish up
+	jr	eq,RvsD4	;must clear sticky
+
+;Need only determine sticky...
+	resb	rl0,#7
+	testl	rr4
+	jr	nz,RvsD5
+	testl	rr6
+	jr	nz,RvsD5
+RvsD4: 
+	resb	rl0,#6	;clear sticky
+RvsD5:
+;restore rem
+	resflg	c
+	rrc	r4
+	rrc	r5
+	rrc	r6
+	rrc	r7
+
+	ret
+
+;*************************************************
+;** 15dec80 -- emulator.
+;** 12jan80 non/segmented.
+;** 02mar81 bugs shaken out for emulator.
+;** 09mar81 save flags in control register.
+;** 15feb82 no more unnorm0, merge all compares
+;** 23feb32 BUG -- fcpz operand is dst.
+;*************************************************
+
+__data	.sect
+	.GLOBAL cmpcase
+cmpcase:
+	.word	cmpno,   cmps0,   cmpsinf, cmpunor
+	.word	cmpd0,   cmpeq,   cmpsinf, cmpunor
+	.word	cmpdinf, cmpdinf, cmp2inf, cmpunor
+	.word	cmpunor, cmpunor, cmpunor, cmpunor
+	.word	cmpunor
+
+	.GLOBAL cpzcase
+cpzcase:
+	.word	cmps0,  cmpeq,  cmpdinf, cmpunor
+	.word	donone, donone, donone,  donone
+	.word	donone, donone, donone,  donone
+	.word	donone, donone, donone,  donone
+	.word	cmpunor
+
+;*************************************************
+;** There are several varieties of the compare
+;** insruction.  All set the internal flags; those
+;** restricted to register operands also set the
+;** CPU flags.  All share a common entry point.
+;** Result is left in rl5.
+;*************************************************
+__text	.sect
+	.GLOBAL cmpunor 		; LABEL
+	.GLOBAL cmp2inf 		; LABEL
+	.GLOBAL cmpdinf 		; LABEL
+	.GLOBAL cmpsinf 		; LABEL
+	.GLOBAL cmpeq   		; LABEL
+	.GLOBAL cmpd0   		; LABEL
+	.GLOBAL cmps0   		; LABEL
+	.GLOBAL cmpno   		; LABEL
+	.GLOBAL Fcpzx   		; LABEL
+	.GLOBAL Fcpz    		; LABEL
+	.GLOBAL Fcpx    		; LABEL
+
+	.GLOBAL Fcp     		; PROCEDURE ENTRY
+Fcp:
+Fcpx:
+	or	r4,#01010h	;2 in, none out
+	call	setup
+
+	ld	r0,r13(#96)	;get other sign
+	ld	r3,cmpcase(r1)
+	jr	Fcp1
+
+;*************************************************
+;** 23feb82: bug fix -- operand is in DST field,
+;**	not SRC.
+;*************************************************
+Fcpz:
+Fcpzx:
+	or	r4,#01000h	;1 in, it's dst
+	call	setup
+
+;*************************************************
+;** Kluge to fool routines of cmp:
+;**  cmp does dst-src while cpz does src-0
+;*************************************************
+	ld	r0,r6	;cpz src <-> cmp dst
+	ld	r3,cpzcase(r1)
+
+Fcp1:
+	call	@r3
+
+;*************************************************
+;** There are two details to be administered
+;** after the comparison has been made:
+;** 1) On an exceptional comparison, the Invalid
+;**	flag must be set if the result is
+;**	unordered.
+;** 2) Leave the condition code in rl5.
+;** The latter is handled later, upon exit.
+;*************************************************
+	cpb	rl5,#010h	; v = 1   ;if unordered...
+	jr	ne,Fcp2
+
+;*************************************************
+;** Check 'exceptional' -- quick and dirty
+;** by looking at the low bit of the 4 bit
+;** opcode field.  It's 0 for exceptional.
+;** Note that the deciding bit is the same in both
+;** FCP/FCPX and FCPZ/FCPZX.
+;*************************************************
+;#Fcp%&@..Segmented Inefficiency..*+'&?@Fcp#'[~_)(|#Fcp
+	lda	r3,r13(#122)
+	bit	@r3,#5
+	jr	z,Fcp2
+	setb	rh5,#0	;invalid operation ;...signal invalid
+
+Fcp2:
+	ldb	r13(#89),rl5		;~ CPU FLAGS byte <<= save results
+	ret
+
+;*************************************************
+;** ...know they're unordered from the outset...
+;*************************************************
+cmpunor:
+	ldb	rl5,#010h	; v = 1 
+	ret
+
+;*************************************************
+;** INF vs INF:  If signs are the same they're =
+;** regardless of mode.  Else, check whether AFFINE
+;** mode enforces the signs.
+;*************************************************
+cmp2inf:
+	xor	r0,r6
+	jr	mi,Fcp11
+	ldb	rl5,#040h	; z = 1 	;= regardless...
+	ret
+
+Fcp11:
+;#Fcp%&@..Segmented Inefficiency..*+'&?@Fcp#'[~_)(|#Fcp
+	lda	r3,r13(#93)	;modes byte
+	bitb	@r3,#0
+	jr	nz,Fcp31		;common tester...
+	ldb	rl5,#040h	; z = 1 	;= in projective
+	ret
+
+;*************************************************
+;** Dst is inf...
+;*************************************************
+cmpdinf:
+;#Fcp%&@..Segmented Inefficiency..*+'&?@Fcp#'[~_)(|#Fcp
+	lda	r3,r13(#93)	;modes byte
+	bitb	@r3,#0
+	jr	nz,Fcp33		;common test
+	ldb	rl5,#010h	; v = 1 	;in proj
+	ret
+
+;*************************************************
+;** Src is inf...
+;*************************************************
+cmpsinf:
+;#Fcp%&@..Segmented Inefficiency..*+'&?@Fcp#'[~_)(|#Fcp
+	lda	r3,r13(#93)	;modes byte
+	bitb	@r3,#0
+	jr	nz,Fcp31
+	ldb	rl5,#010h	; v = 1 
+	ret
+
+;*************************************************
+;** Know they're =
+;*************************************************
+cmpeq:
+	ldb	rl5,#040h	; z = 1 
+	ret
+
+;*************************************************
+;** Dst is 0.  Common test -- result based on sign
+;** or src operand.
+;*************************************************
+cmpd0:
+Fcp31:
+	ldb	rl5,#008h	; d = 1 	;assume >
+	bit	r6,#15		;check src sign
+	ret	nz		;it's negative
+	ldb	rl5,#0A8h	; c = s = d = 1 
+	ret
+
+;*************************************************
+;** Src is 0.  Common test -- result based on sign
+;** of dst operand (in r0).
+;*************************************************
+cmps0:
+Fcp33:
+	ldb	rl5,#0A8h	; c = s = d = 1 	;assume <
+	bit	r0,#15		;check dst sign
+	ret	nz		;it's negative
+	ldb	rl5,#008h	; d = 1 
+	ret
+
+;*************************************************
+;** They might just be nonzero numbers.  If signs
+;** differ use either common routine.
+;*************************************************
+cmpno:
+	xorb	rh0,rh6
+	jr	mi,Fcp31
+
+;*************************************************
+;** Have 2 nonzero finite #'s of same sign.
+;** DANGER: saving formats&flags on stack.
+;*************************************************
+	pushl	@r15,rr4
+
+;*************************************************
+;** First dst word is in r0, get next 5.
+;*************************************************
+	lda	r3,r13(#96+2)
+	ldm	r1,@r3,#5
+
+;*************************************************
+;** Compare: first with signed exponent then
+;** magnitude significands.  Keep FLAGS...
+;*************************************************
+	cp	r1,r7
+
+;*************************************************
+;** ...while freeing up rr4 for formats and flags.
+;*************************************************
+	ldl	rr0,rr4
+	popl	rr4,@r15
+
+	jr	gt,cpgt	;finally use FLAGS
+	jr	lt,cplt
+	cpl	rr2,rr8
+	jr	ugt,cpgt
+	jr	ult,cplt
+	cpl	rr0,rr10
+	jr	ugt,cpgt
+	jr	ult,cplt
+
+	ldb	rl5,#040h	; z = 1 
+	ret
+
+cpgt:
+	ldb	rl5,#008h	; d = 1 
+	bitb	rh6,#7
+	ret	z
+	ldb	rl5,#0A8h	; c = s = d = 1 
+	ret
+
+cplt:
+	ldb	rl5,#0A8h	; c = s = d = 1 
+	bitb	rh6,#7
+	ret	z
+	ldb	rl5,#008h	; d = 1 
+	ret
+
+;*************************************************
+;** Hardware-type square root algorithm
+;** to replace horrors of heron's rule.
+;** 12jan81 -- non/segmented form.
+;** 13apr81 -- fix bug in lsb of extended.
+;** 17apr81 -- LAST fix bug in lsb of extended.
+;** 15feb82: no more unnorm 0
+;** 19mar82: changed donone to dotrap which delivers NNaN if necessary
+;*************************************************
+__data	.sect
+	.GLOBAL sqrcase
+sqrcase:
+	.word	sqrno,  ressrc, sqrin,  resnsrc
+	.word	donone, donone, donone, donone
+	.word	donone, donone, donone, donone
+	.word	donone, donone, donone, donone
+	.word	dotrap
+
+__text	.sect
+	.GLOBAL resinv 		; LABEL
+	.GLOBAL sqrin 		; LABEL
+	.GLOBAL sqrno 		; LABEL
+	.GLOBAL Fsqr 		; PROCEDURE ENTRY
+Fsqr:
+	or	r4,#02010h
+	call	setup
+
+	ld	r3,sqrcase(r1)
+	call	@r3
+	call	delivery
+	ret
+
+;*************************************************
+;** The root of INF is valid only if it's pos
+;** and mode is AFFINE.
+;*************************************************
+sqrin:
+	bitb	rh6,#7		;test sign
+	jp	nz,resinv
+;#Fsqr%&@..Segmented Inefficiency..*+'&?@Fsqr#'[~_)(|#Fsqr
+	lda	r3,r13(#93)	;modes byte
+	bitb	@r3,#0
+	jp	z,resinv
+	ret
+
+sqrno:
+gstep0:
+	bitb	rh6,#7	;must be positive
+	jp	nz,resinv
+	bit	r8,#15	;and normalized
+	jp	z,resinv
+
+;*************************************************
+;** This scheme is based on George Taylor's
+;** binary rendition of the 'schoolperson'
+;** algorithm of grammar school.
+;** For speed, the first half of the iteration
+;** is split into two phases.
+;**
+;** First the exponent, biased by 3fff, is
+;** divided by 2:
+;**
+;** c=0	--> exp is odd
+;**	--> bias fix=1fff, to decrement exp
+;**	--> sig digits must be left-shifted
+;**	an extra bit.
+;**
+;** c=1	--> exp is even
+;**	--> bias fix=2000.
+;*************************************************
+gstep1:
+	;save format, error and r13
+	pushl	@r15,rr4
+	pushl	@r15,rr12
+
+	sub	r0,r0		;clearing c
+	rrcb	rl6
+	rrc	r7
+	ldctlb	rh0,flags	;save carry
+	jr	nc,Fsqr11
+
+	add	r7,#1
+	adcb	rl6,rl0
+Fsqr11:
+	add	r7,#01fffh
+	adcb	rl6,rl0
+	pushl	@r15,rr6  	;save exp
+
+;*************************************************
+;** now align binary pt twixt r6&7
+;*************************************************
+	subl	rr6,rr6		;clear t
+	ldctlb	flags,rh0	;to restore carry
+	jr	c,Fsqr12
+
+	;odd exp -> 2 bits left of bin pt.
+	addl	rr10,rr10
+	adc	r9,r9
+	adc	r8,r8
+	adc	r7,r7
+Fsqr12:
+	;even exp -> 1 bit left of bin pt.
+	addl	rr10,rr10
+	adc	r9,r9
+	adc	r8,r8
+	adc	r7,r7
+
+;*************************************************
+;** Three quantities participate in the rooting:
+;**	S = high radicand
+;**	T = low radicand
+;**	Q = square root being accumulated
+;** The idea is to generate a root by repeated
+;** approximations of the form:
+;**	S|T = (OLD*2 + NEXTBIT) ** 2
+;** In the analogy to the schoolperson algorithm,
+;** S is the participant in the subtraction, and
+;** T is just 'shifted' in from the right.
+;**
+;** Rearrange to register scheme:
+;** rh0 -- count
+;** rr2 -- spare S for restore in case of overkill
+;** rr4 -- S
+;** rr6, rr8 -- T
+;** rr10 -- Q
+;** rq12 -- r13, r15
+;** stack: exp < adrs's < formats
+;*************************************************
+gstep2a_1:
+	ldl	rr4,rr6		;low S, high T
+	ldl	rr6,rr8 	;med T
+	ldl	rr8,rr10	;low T
+	ld	r10,r4		;namely, 0
+	ldk	r11,#5		;guess first = 1
+	dec	r5,#1		;first step easy
+	ldb	rh0,#16		;now get 16 more
+
+Fsqr21:
+	;first S|T *= 4
+	addl	rr8,rr8
+	adc	r7,r7
+	adc	r6,r6
+	adc	r5,r5
+	adc	r4,r4
+	addl	rr8,rr8
+	adc	r7,r7
+	adc	r6,r6
+	adc	r5,r5
+	adc	r4,r4
+
+	;Save S in case S-Q < 0
+	ldl	rr2,rr4
+	subl	rr4,rr10	;S - Q
+
+;*************************************************
+;** Recall that at each step the 'remainder' is
+;** reduce by cross terms of the form:
+;**	2 * radix * root + nextguess
+;** For simplicity, GST keeps a '01' below Q
+;** in rr10.
+;**
+;** Note trickery here:  if S-Q < 0 then
+;** net effect is to shift rr10 and subtract
+;** 1, i.e. this root bit is 0.  if S-Q >= 0
+;** then effect is to shift and add 3, for
+;** net effect of 5, making this root bit 1.
+;*************************************************
+	jr	pl,Fsqr22
+
+	ldl	rr4,rr2
+	jr	Fsqr23
+Fsqr22:
+	set	r11,#1
+Fsqr23:
+	addl	rr10,rr10
+	dec	r11,#1	;Never a carry past [1]
+
+	decb	rh0,#1
+	jr	nz,Fsqr21
+
+gstep2_2:
+;*************************************************
+;** Second phase of first half of iteration.
+;** rh0 -- count
+;** rl0 -- flags for restoring
+;** r13, rr4 -- S
+;** rr6 -- T (last half of T is 0 by now)
+;** r9, rr10 -- Q
+;** r12, rr2 -- spare S
+;*************************************************
+	sub	r13,r13		;clear hi S
+	ldb	rh0,#16
+Fsqr25:
+	addl	rr6,rr6
+	adc	r5,r5
+	adc	r4,r4
+	adc	r13,r13
+	addl	rr6,rr6
+	adc	r5,r5
+	adc	r4,r4
+	adc	r13,r13
+
+	ld	r12,r13	;save spare S
+	ldl	rr2,rr4
+	subl	rr4,rr10
+	sbc	r13,r9
+
+	;save bad news about borrow
+	ldctlb	rl0,flags
+
+	addl	rr10,rr10
+	adc	r9,r9
+	inc	r11,#3	;assume this root bit is 1
+	ldctlb	flags,rl0
+	jr	pl,Fsqr26
+
+	ld	r13,r12
+	ldl	rr4,rr2
+	res	r11,#2
+Fsqr26:
+	decb	rh0,#1
+	jr	nz,Fsqr25
+
+gstep2b:
+;*************************************************
+;** Now the last half of the iteration.  Since
+;** the very last root bit is guard bit we don't
+;** want to shift it in.  Cook count so that
+;** count is 0 during last iteration.
+;** Since T=0 in this phase, and Q as always
+;** = xxxxxxxx01, there is a guaranteed borrow
+;** leaving yyyyyyyy11.  Thus GST's
+;** algorithm economizes by incorporating
+;** the borrow into a one's comp. subtract.
+;**
+;** New register arrangement, without t:
+;** rh0 -- count
+;** rl0 -- flags for restore
+;** rq4 -- S
+;** rq8 -- not(Q) (for 1's comp subtracts)
+;** rr12, rr2  -- spare S
+;** rq12 -- r13, r15
+;*************************************************
+	com	r8
+	com	r9
+	com	r10
+	com	r11
+
+	; Q /= 4 -- '01' not explicitly stored 
+	setflg	c	;...to shift in not(0)'s
+	rrc	r9
+	rrc	r10
+	rrc	r11
+	setflg	c
+	rrc	r9
+	rrc	r10
+	rrc	r11
+
+	ldl	rr6,rr4	;low S
+	ld	r5,r13	;med S
+	sub	r4,r4	;hi S
+
+	ldb	rh0,#31	;32 steps, =0 during last
+Fsqr200:	;loop top
+	ldl	rr12,rr4	;save S in case...
+	ldl	rr2,rr6
+
+	addl	rr6,rr10
+	adc	r5,r9
+	adc	r4,r8	;c=1 --> S-Q >= 0
+
+	jr	c,Fsqr201	;restore if S-Q < 0
+	ldl	rr4,rr12
+	ldl	rr6,rr2
+Fsqr201:
+	ldctlb	rl0,flags	;save c
+
+	comflg	c	;Q[this] = not-c
+	adc	r11,r11
+	adc	r10,r10
+	adc	r9,r9
+	adc	r8,r8
+
+	;S *= 4, with c, i.e. Q, fixing
+	;bits shifted in
+	ldctlb	flags,rl0
+	adc	r7,r7
+	adc	r6,r6
+	adc	r5,r5
+	adc	r4,r4
+	ldctlb	flags,rl0
+	adc	r7,r7
+	adc	r6,r6
+	adc	r5,r5
+	adc	r4,r4
+
+	decb	rh0
+	jr	nz,Fsqr200
+
+;************************************************
+;** For guard/sticky bits have 2 cases based on
+;** carry-out of S from above in last step:
+;** c=1 --> g&s are 1 (treat as r15. case at top)
+;** c=0 --> run as typical step.
+;************************************************
+gstep3:
+	ldctlb	rl0,flags	;save carry-out
+	tccb	c,rl0		;tentative sticky
+	jr	c,Fsqr222		;no last step
+
+	ldl	rr12,rr4	;save S
+	ldl	rr2,rr6
+
+	addl	rr6,rr10
+	adc	r5,r9
+	adc	r4,r8
+	jr	c,Fsqr221		;S-Q > 0?
+
+	ldl	rr4,rr12
+	ldl	rr6,rr2
+Fsqr221:
+	ldctlb	rl0,flags	;real guard
+Fsqr222:
+	com	r8	;get true Q
+	com	r9
+	com	r10
+	com	r11
+
+	and	r0,#00081h	;rl0[7,0] = G,S
+	or	r4,r5
+	or	r4,r6
+	or	r4,r7
+	tccb	nz,rl0	;and this is sticky
+
+	popl	rr6,@r15		;sign & exp
+	popl	rr12,@r15	;r13
+	popl	rr4,@r15		;format,errs
+	ldb	rl5,rl0		;rounding...
+
+	call	round
+	ret
+
+;*************************************************
+;** 08nov80: to 64 bits
+;** 12jan81: non/segmented form of emulator.
+;** 23mar81: one-step process.
+;** 01jun81: back to multi-step process, with sign
+;**	corrections.
+;** 15feb82: no more unnormal 0
+;** 19mar82: changed donone to dotrap which delivers NNaN if necessary
+;*************************************************
+__data	.sect
+	.GLOBAL actrem 
+actrem:
+	.word	remno,   reminv,  remnod,  resnsrc
+	.word	remnz,   reminv,  remnz,   resnsrc
+	.word	reminv,  reminv,  reminv,  resnsrc
+	.word	resndst, resndst, resndst, resprec
+	.word	dotrap
+
+__text	.sect
+
+	.GLOBAL  reminv 		; LABEL
+	.GLOBAL  remnz  		; LABEL
+	.GLOBAL  remnod 		; LABEL
+	.GLOBAL  remno  		; LABEL
+	.GLOBAL  Fremstep  		; PROCEDURE  ENTRY
+Fremstep:
+	or	r4,#03010h
+	call	setup
+
+;*************************************************
+;** Save a template for the FLAGS byte on stack.
+;** Assume one-step (i.e. set Carry) and determine
+;** quotient sign.
+;*************************************************
+	ld	r0,r13(#96)	;get dvd sign
+	xorb	rh0,rh6		;QUO sign
+	andb	rh0,#080h	;kill junk bits
+	rrb	rh0,#1		;align QUO sign
+	setb	rh0,#7		;set C
+	push	@r15,r0
+
+	ld	r3,actrem(r1) 
+	call	@r3
+
+	pop	r0,@r15		;get FLAGS...
+	ldb	rl5,rh0		;...and stuff
+	ldb	r13(#89),rl5	;~ CPU FLAGS byte save in CTL
+	call	delivery
+	ret
+
+
+;*************************************************
+;** When invalid, QUO is don't care.  It comes out
+;** 0 with XOR sign here.
+;*************************************************
+reminv:
+	call	resinv
+	ret
+
+;*************************************************
+;** For (0 REM x) be sure 0 has sign of dst.
+;*************************************************
+remnz:
+	call	reszero
+	ld	r0,r13(#96)	;dst sign
+	andb	rh0,#080h	;mask sign only
+	orb	rh6,rh0
+	ret
+ 
+;*************************************************
+;** For (x REM INF) be sure x is normalized with
+;** sign unchanged.  QUO is signed 0.
+;*************************************************
+remnod:
+	call	resdst
+	jr	FRemS36	;Finish up as before
+
+;*************************************************
+;** USUAL CASE of nonzero, finite numbers...
+;*************************************************
+remno:
+	bit	r8,#15	; divisor normalized? 
+	jr	z,reminv;...invalid if not
+
+;*************************************************
+;** Stack: flags < r13 < ret < QUO ...
+;*************************************************
+	pushl	@r15,rr12	;r13
+	pushl	@r15,rr4		;flags
+
+;*************************************************
+;** Load and normalize dividend -- which is
+;** never unnormal 0.  Save REM sign.
+;** Stack: Rsign < flags < r13 < ret < QUO ...
+;*************************************************
+	add	r13,#96
+	ldm	r0,@r13,#6	;r0-5 = dividend
+
+	push	@r15,r0
+ 
+	bit	r2,#15	;DVD normalized?
+	jr	nz,FRemS2
+FRemS1:
+	dec	r1	;biased exp may go negative
+	addl	rr4,rr4
+	adc	r3,r3
+	adc	r2,r2
+	jr	pl,FRemS1
+FRemS2:
+	exts	rr0	;true 32 bit ext
+	pushl	@r15,rr0	;save normalized DVD exp
+ 
+;*************************************************
+;** Stack: remexp < Rsgn < flags< r13 < ret < QUO...
+;** Want dvdexp - (dvrexp - 2) QUO bits, of which
+;** last is first fraction bit.
+;** 
+;** Three cases:
+;**	No division required (easy).
+;**	< 127 division steps (usual).
+;**	Only 64 division steps taken, with partial
+;**		result returned (pain).
+;*************************************************
+	dec	r7,#2
+	exts	rr6
+	subl	rr0,rr6
+	jr	gt,FRemS4	;gt --> (usual) or (pain)
+
+;*************************************************
+;** DVD < half DVR so just stuff DVD for REM.
+;** Set up final register mask: REM digits in rq4,
+;** exp atop stack, quo in r11, sign change in r0.
+;*************************************************
+	ldl	rr6,rr4
+	ldl	rr4,rr2
+	sub	r0,r0
+	ld	r11,r0
+	jr	FRemS30
+
+;*************************************************
+;** Distinguish <= 127 and > 127 cases...
+;*************************************************
+FRemS4:
+	cp	r1,#127
+	jr	ule,FRemS6
+
+;*************************************************
+;** Abbreviated case: set partial result exp to
+;** DVD-64, take 64 steps, and finish up quickly.
+;** Clear 'Carry' in saved QUO to mark partial res.
+;** Stack: remexp < Rsgn < flags< r13 < ret < QUO...
+;**      :   4        2      4    4    2
+;*************************************************
+	lda	r7,r15(#16)	;QUO
+	resb	@r7,#7		;clear 'done'
+
+	subl	rr0,rr0
+	set	r1,#6		;2^6 = 64
+	ldl	rr6,@r15
+	subl	rr6,rr0
+	ldl	@r15,rr6
+
+	calr	FRemS70	;division
+
+;*************************************************
+;** After 64 divide steps, accumulate reduced DVD
+;** in r6-11 and return -- no normalization,
+;** over/under test or rounding until last step.
+;*************************************************
+	ldl	rr10,rr6	;low DVD
+	ldl	rr8,rr4		;high DVD
+
+	popl	rr6,@r15		;exp
+	pop	r2,@r15		;copy Rsgn
+	ldb	rh6,rh2
+	popl	rr4,@r15		;flags
+	popl	rr12,@r15	;r13
+	ret
+
+;*************************************************
+;** Set REM exp to one less than DVR exp, which
+;** has already been incremented by 2; replace DVD
+;** exp atop stack.
+;** Run nonrestoring divide with exp difference
+;** known less than 128.
+;*************************************************
+FRemS6:
+	inc	r7,#1	;exp - 2 + 1 = exp - 1
+	exts	rr6
+	ldl	@r15,rr6	;replace DVD exp
+
+	calr	FRemS70
+
+;*************************************************
+;** rq4 = rem = reduced dvd = rdvd
+;** nonrestore => sign of rdvd is not(r11[0])
+;**
+;** Three cases:
+;** rdvd < 0 implies rem < 0.5*dvd, so we need
+;**   only avenge the deficit from the subtract
+;**   in the last divide step.
+;** rdvd = 0 implies rem = 0.5*dvd, so we must
+;**   decide which way the half way case goes.
+;**  rdvd > 0 implies computedrem > 0.5*dvd,
+;**    so true rem = dvd-rdvd.
+;** Sign of rem is sign of dvr except in case 3,
+;**  and in case 2 when quo must be bumped.  In
+;**  the code below r0 will hold the sign changer.
+;*************************************************
+	bit	r11,#0	;0 --> REM = rem + DVR/2
+	jr	z,FRemS30
+
+;*************************************************
+;** rq4 == 0 --> half-way case, which just falls
+;** through by trickery.
+;*************************************************
+	testl	rr4	;slower, but shorter
+	jr	nz,FRemS13
+	testl	rr6
+	jr	nz,FRemS13
+
+;*************************************************
+;** Half-way case: decide whether to swap sign,
+;** and let typical case load DVR/2.
+;*************************************************
+	bit	r11,#1  ;test last integer Q bit
+	jr	z,FRemS15	;ok -- it's 0
+
+;*************************************************
+;** Typical more than half-way case.
+;*************************************************
+FRemS13:
+	inc	r11,#2	;add 1 to quo
+	set	r0,#15	;flip sign
+FRemS15:
+	subl	rr12,rr6
+	sbc	r3,r5
+	sbc	r2,r4
+	ldl	rr6,rr12
+	ldl	rr4,rr2
+
+;*************************************************
+;** Register setup:
+;**	r0 = sign change; rq4 = REM digits
+;**	r11 = QUO digits
+;** Stack: exp < Rsgn < flags < r13 < ret < QUO...
+;*************************************************
+FRemS30:
+	ldk	r1,#00Eh		;mask 3 int QUOs
+	and	r1,r11		;save QUO for now
+
+	ldl	rr10,rr6	;low REM
+	ldl	rr8,rr4		;high REM
+
+	popl	rr6,@r15		;exp
+	pop	r2,@r15		;Rsgn
+	popl	rr4,@r15		;flags
+	popl	rr12,@r15	;r13
+
+	ldb	rh1,r15(#2)	;saved QUO
+	rlb	rl1,#2		;align QUO bits
+	orb	rh1,rl1
+	ldb	r15(#2),rh1
+
+	xorb	rh0,rh2		;fix REM sign
+	ldb	rh6,rh0
+FRemS36:
+	call	normordigs
+	call	under
+	call	round
+	call	over
+
+	ret
+
+;*************************************************
+;** DIVISION STEPS:
+;** Set up for nonrestoring division:
+;** r0 = unigned #of quo bits needed.
+;** rq4 = dividend cum remainder
+;** rq8 = quotient
+;** rr2,rr12 = divisor
+;** Exit with r0 = 0 from nonrestore().
+;*************************************************
+FRemS70:
+	ld	r0,r1	;count>0  for nonrestore
+
+	ldl	rr6,rr4		;lo dvd
+	ldl	rr4,rr2		;hi dvd
+	ldl	rr2,rr8		;hi dvr
+	ldl	rr12,rr10	;lo dvr
+
+	call	nonrestore
+
+;*************************************************
+;** If low QUO bit is 0, then last div step
+;** borrowed.  Add 1/2 dvr to avenge deficit.
+;*************************************************
+	bit	r11,#0	;0 --> REM = rem + DVR/2
+	ret	nz
+
+	addl	rr6,rr12
+	adc	r5,r3
+	adc	r4,r2
+	ret
+
+;*************************************************
+;** 10dec80 -- modified for emulator.
+;** 12jan81 -- non/segmented edition.
+;** 26feb81 -- Trapping NaNs have leading 0 frac.
+;** 11feb82 -- Remove old _fpemutop label.
+;**	Change denorm exception flag to unnorm
+;**	and always normalize unnorms.
+;** 15feb82: no more unnorm 0, different handling
+;**	of nontrapping nans in tables.
+;** 18mar82 -- Catch unnormal 0.
+;**	Fix nontrapping NAN index setup
+;*************************************************
+;** Unpack operands into work area and set descrip
+;** Regs:
+;**	i --	rh4 = dstform, rl4 = srcform
+;**		r3 = op ptr
+;**		r13,r15 = r13, r15
+;**	o --	r1 = descriptor, r5 = errors, rnd
+;**	m --	r0-r11
+;*************************************************
+__text	.sect
+	.GLOBAL  setup  		; PROCEDURE ENTRY
+setup:
+
+	sub	r1,r1		;init descriptor
+ 
+;*************************************************
+;** Check for dst operand input.
+;*************************************************
+	bitb	rh4,#4	;if dest is input
+	jr	z,setup11
+
+	ldl	rr2,r13(#124)
+	calr	unpack		;and unpack
+;#setup%&@..Segmented Inefficiency..*+'&?@setup#'[~_)(|#setup
+	lda	r3,r13(#96)
+	ldm	@r3,r6,#6
+ 
+;*************************************************
+;** Check for src input -- note how 'last' operand
+;** unpacked is left in R6-11.
+;*************************************************
+setup11:
+	bitb	rl4,#4	;check src
+	jr	z,setup12
+
+	rl	r1,#2		;shift descriptor
+	exb	rh4,rl4		;swap for unpack
+	ldl	rr2,r13(#128)
+	calr	unpack
+;#setup%&@..Segmented Inefficiency..*+'&?@setup#'[~_)(|#setup
+	lda	r3,r13(#108)
+	ldm	@r3,r6,#6
+	exb	rh4,rl4		;...and unswap
+ 
+;*************************************************
+;** Now check for special cases in descriptor
+;** word.  Set up dummy index for trapping animals.
+;*************************************************
+setup12:
+	andb	rh1,rh1		;either is trap
+	jr	z,setup14
+
+	setb	rh5,#6	;trapping nan
+	ld	r1,#16
+setup14:
+;*************************************************
+;** Now back to start-up routine with an address
+;** table index.
+;*************************************************
+	add	r1,r1	; case * 2 
+	ret
+
+;*************************************************
+;** Unpack and save a floating operand
+;** Regs:
+;**	 i --	rh4 = format, r1 = descriptor
+;**		r3 = op_ptr
+;**	 o --	r6-11 = op, r1 updated.
+;*************************************************
+unpack:
+	bitb	rh4,#2	;if ext?
+	jr	z,s_or_d
+
+;*************************************************
+;** To unpack ext must spread exp to 24 bits,
+;** sliding sign to private leading byte.
+;**
+;** Normalize un- and de-norm extendeds.
+;**
+;** What about unnormals?
+;*************************************************
+	ldm	r7,@r3,#5
+	ld	r6,#08000h
+	andb	rh6,rh7
+	res	r7,#15		;reset lead exp bit
+
+	cp	r7,#07FFFh	;NaN or INF?
+	jr	eq,fdninf
+
+	bit	r8,#15		;normalized?
+	ret	nz
+	test	r7		;un as opposed to denormalized	
+	jr	z,fdzun
+	setb	rh5,#5	;un- or de-normalized	;this catches unnormal 0	
+	jr	fdzun
+
+
+s_or_d:
+	bitb	rh4,#1
+	jr	nz,double
+
+;*************************************************
+;** Single significant bits are aligned but for
+;** a one-byte shift, for which 'exb' is handy.
+;** Pain: must load data to low registers to
+;** get byte addressing.
+;** The special cases are:
+;**  -- zero has exponent forced to 0000.
+;**  -- denormal has bias bump by one and lead 0.
+;**  -- inf, nan have exponent forced to 7fff
+;**     and msb cleared.
+;**  -- normal has lead bit set.
+;*************************************************
+	ldl	rr6,@r3
+	subl	rr2,rr2
+	exb	rl3,rh6		;sign & hi exp
+	exb	rh6,rl6		;lo exp & hi digs
+	exb	rl6,rh7		;med digs
+	exb	rh7,rl7		;lo digs
+	ldl	rr8,rr6
+	subl	rr10,rr10	;clear trailers
+
+	rl	r8		;lo exp bit
+	rlcb	rl3		;sign -> carry
+	rrcb	rh2
+	rrc	r8		;0 -> lead bit
+	ldl	rr6,rr2
+
+	;now fix up reserved exponents
+	or	r7,r7
+	jr	nz,setup20
+ 
+	ld	r7,#03f81h	;0 or denormal
+	jr	fdzun
+setup20:
+	cp	r7,#000FFh
+	jr	eq,fdninf	;nan or inf
+
+	add	r7,#03f80h	;normalized
+	set	r8,#15		;set lead bit
+	ret
+
+;*************************************************
+;** Because of 11-bit exp, sig dig field requires
+;** 5-bit shift, which makes this unpack long.
+;** See 'single' above for discussion of special
+;** cases.
+;*************************************************
+double:
+	ldm	r7,@r3,#4
+	sub	r6,r6		;c = 0
+	ld	r11,r6
+	setb	rh6,#7
+	andb	rh6,rh7
+	res	r7,#15
+ 
+	ldk	r3,#5		;count for shift
+setup31:
+	rrc	r7
+	rrc	r8
+	rrc	r9
+	rrc	r10
+	rrc	r11
+	dec	r3
+	jr	nz,setup31
+
+	rlc	r8	;low exp bit to r7
+	rlc	r7
+	rrc	r8
+
+	or	r7,r7	;denorm or 0
+	jr	nz,setup32
+
+	ld	r7,#03c01h	;0 or denormal
+	jr	fdzun
+setup32:
+	cp	r7,#007ffh
+	jr	eq,fdninf	;INF, NaN
+
+	add	r7,#03c00h	;normalized
+	set	r8,#15
+	ret
+
+
+;*************************************************
+;** Consolidate unpacking above to get special
+;** cases for descriptor:
+;**	0100 - trapping NaN
+;**	0003 -  nontrapping NaN
+;**	0002 - infinity
+;**	0001 - normal 0
+;**	0000 - all else (is there anything left?)
+;** After dst is unpacked the descriptor is left
+;** shifted by two bits.
+;** Thus lead byte indicates trap NaN, and if it
+;** is zero, trailing byte indexes into
+;** operation's action table (hence the need for
+;** economy.
+;*************************************************
+
+
+;*************************************************
+;** NAN or INF
+;*************************************************
+fdninf:
+	ld	r7,#07FFFh	;big exp
+	testl	rr8
+	jr	nz,fdnan
+	testl	rr10
+	jr	nz,fdnan
+
+	set	r1,#1
+	ret
+fdnan:
+	or	r1,#003h	;presume silent;3/18 changed from 2
+	bit	r8,#14
+	ret	nz
+	set	r1,#8
+	ret
+
+;*************************************************
+;** zero or unnormalized
+;*************************************************
+fdzun:
+	testl	rr8
+	jr	nz,fdun
+	testl	rr10
+	jr	nz,fdun
+
+	sub	r7,r7	;force 0 exp
+	set	r1,#0
+	ret
+fdun:
+	setb	rh5,#5	;un- or de-normalized	;found unnormal
+setup101:
+	dec	r7
+	addl	rr10,rr10
+	adc	r9,r9
+	adc	r8,r8
+	jr	pl,setup101
+
+	bit	r7,#15		;exp gone negative
+	ret	z
+	ldb	rl6,#0FFh
+	ret
+
+;*************************************************
+;** Two strange, do-nothing routines.
+;*************************************************
+__text	.sect
+	.GLOBAL Fnoop 		; PROCEDURE ENTRY
+Fnoop:
+	ret
+
+	.GLOBAL Fstp 		; PROCEDURE ENTRY
+Fstp:
+	ret
+
+
+;*************************************************
+;** 9dec80 -- modified for emulator
+;** 14jan81 -- non/segmented operation.
+;** 19mar82 -- added dotrap to deliver NNaN if NAN trap disabled
+;*************************************************
+	.GLOBAL  resdst  		; LABEL
+	.GLOBAL  reszero  		; LABEL
+	.GLOBAL  resinf  		; LABEL
+	.GLOBAL  resinv  		; LABEL
+	.GLOBAL  resprec  		; LABEL
+	.GLOBAL  donone  		; LABEL
+	.GLOBAL  dotrap  		; LABEL
+	.GLOBAL  resndst  		; LABEL
+	.GLOBAL  resnsrc  		; LABEL
+
+;*************************************************
+;** Src already in r6-11 -- so get back...
+;** Donone is used when an error is imminent.
+;*************************************************
+	.GLOBAL  ressrc  		; PROCEDURE ENTRY
+ressrc:
+donone:
+	ret
+
+;*************************************************
+;** If NAN trap disabled must deliver a NNaN, else do nothing
+;*************************************************
+dotrap:
+	ldb	rh0,r13(#94)	;trap enables
+	bitb	rh0,#6	;trapping nan
+	ret	nz
+	jr	makenan
+
+;*************************************************
+;** Get dst from work area.
+;*************************************************
+resdst:
+;#ReSrc%&@..Segmented Inefficiency..*+'&?@ReSrc#'[~_)(|#ReSrc
+	lda	r7,r13(#96)
+	ldm	r6,@r7,#6
+	ret
+
+;*************************************************
+;** Stuff positive 0.
+;*************************************************
+reszero:
+	subl	rr10,rr10
+	ldl	rr8,rr10
+	ldl	rr6,rr10
+	ret
+
+;*************************************************
+;** Stuff inf.
+;*************************************************
+resinf:
+	subl	rr10,rr10
+	ldl	rr8,rr10
+	ldl	rr6,#000007fffh
+	ret
+
+;*************************************************
+;** Set invalid flag and make a stock NaN...
+;*************************************************
+resinv:
+	setb	rh5,#0	;invalid operation
+makenan:
+	subl	rr10,rr10
+	ldl	rr8,#040000000h
+	ldl	rr6,#000007fffh
+	ret
+
+;*************************************************
+;** Who knows...(guess dst)
+;** 1/19/82 discovered storing into r4 ???
+;** 15feb82 new form uses 1 of 2 following codes.
+;*************************************************
+resprec:
+	jp	resnsrc
+
+;*************************************************
+;** Result is NaN, but must be checked
+;** for invalid.
+;*************************************************
+resndst:
+;#ReSrc%&@..Segmented Inefficiency..*+'&?@ReSrc#'[~_)(|#ReSrc
+	lda	r7,r13(#96)
+	ldm	r6,@r7,#6
+resnsrc:
+	bitb	rh4,#0
+	ret	z		;extended dst
+
+	bitb	rh4,#1
+	jr	nz,ReSrc30
+
+	;Single precision
+	testl	rr10
+	jr	nz,ReSrc37
+	ld	r0,#000FFh
+	and	r0,r9
+	ret	z
+
+ReSrc30:
+	ld	r0,#07FFh
+	and	r0,r11
+	ret	z
+
+ReSrc37:
+	setb	rh5,#0	;invalid operation
+	ret
+
+;*************************************************
+;** 10dec80: modified for emulator
+;** 12jan81: modified for non/segmented
+;** 28jan81: tidyflags added
+;** 17apr81: trap marker added to tidyflags
+;** 09may81: general versions of o/u/val etc.
+;** 11feb82: oflow in chop to +-HUGE, not INF
+;** 15feb82: no more unnormal numbers, and leave
+;**	code to do range coercion with current
+;**	precision control bits.
+;*************************************************
+;** shift rq8 through rl5 with sticky.
+;** beware of huge shifts -- r0 is signed #
+;** regs:
+;**	 i --	r0 = count of rt shifts,
+;**		C = carry-in on rt shifts
+;** OPTIMIZE these shift routines.
+;*************************************************
+__text	.sect
+	.GLOBAL  shiftdigs  		; PROCEDURE ENTRY
+shiftdigs:
+
+	and	r0,r0
+	jr	mi,shifD2
+	ret	z
+
+	;take C as is from caller
+shifD1:
+	rrc	r8
+	rrc	r9
+	rrc	r10
+	rrc	r11
+	rrcb	rl5     ;catch sticky in c
+	tccb	c,rl5   ;very sticky operation
+	resflg	c
+	dec	r0
+	jr	nz,shifD1
+	ret
+ 
+shifD2:
+	resflg	c
+	addb	rl5,rl5
+	adc	r11,r11
+	adc	r10,r10
+	adc	r9,r9
+	adc	r8,r8
+	inc	r0
+	jr	nz,shifD2
+	ret
+ 
+;*************************************************
+;** normalize unsigned #in r6-11
+;** two ENTRY points depENDing on need for or[all].
+;** regs:
+;**	r0=orofdigs,
+;**	r6-r11=opwithsign, r13, r15, r5
+;** leaves r0=0 iff all digits zero.
+;*************************************************
+	.GLOBAL  normdigs 		; LABEL
+	.GLOBAL  normordigs  		; PROCEDURE ENTRY
+normordigs:
+
+	ld	r0,r11
+	orb	rl0,rl5
+	or	r0,r10
+	or	r0,r9
+	or	r0,r8
+normdigs:
+	and	r0,r0
+	jr	nz,NoMoD1
+
+	ld	r7,r0		;-> Norm 0
+	ldb	rl6,rl0
+	ret
+
+NoMoD1:
+	ldk	r0,#1		;to bump exp
+	subb	rh0,rh0		;clears C
+	and	r8,r8  ;set s bit for ret
+NoMoD2:
+	ret	mi 
+	sub	r7,r0
+	sbcb	rl6,rh0
+	subb	rh0,rh0		;clears C
+	addb	rl5,rl5
+	adc	r11,r11
+	adc	r10,r10
+	adc	r9,r9
+	adc	r8,r8
+	jr	NoMoD2
+
+;*************************************************
+;** Test for underflow against biased threshold;
+;** denormalize if called for.
+;** Bad news if result is 0 against s or d thresh.
+;** Note that even though 24 bits are used for the
+;** intermediate exponent, the threshold need only
+;** be kept to 16.  Refer to associated documents
+;** on paper.
+;**
+;** regs:
+;**	 io  r6-11=signedop, rh4=format
+;**	 r13, r15, r5
+;**	 m   r0-3
+;*************************************************
+	.GLOBAL  itsunder  		; LABEL
+	.GLOBAL  under  		; PROCEDURE ENTRY
+
+;*************************************************
+;** RANGE COERCION: remove the next two lines.
+;*************************************************
+under:
+	bitb	rh4,#2
+	jr	nz,under22
+
+	bitb	rh4,#1
+	jr	z,under20
+	ldl	rr0,#03C010600h	;double
+	jr	under1
+under20:
+
+;*************************************************
+;** RANGE COERCION: add the two lines
+;**	bitb	rh4,#0
+;**	jr	z,under22
+;*************************************************
+	ldl	rr0,#03F8100C0h	;single
+	jr	under1
+
+under22:
+	ldl	rr0,#000006000h	;extended
+	bitb	rl6,#0		;if bit 16 is 1 it's under
+	jr	nz,locunder
+
+under1:
+	cp	r0,r7
+	ret	ule
+
+itsunder:
+locunder:
+	setb	rh5,#2	;underflow	;signal uflow and
+	subb	rl6,rl6		;clear hi half
+;#under%&@..Segmented Inefficiency..*+'&?@under#'[~_)(|#under
+	lda	r3,r13(#94)	;trap enables
+	bitb	@r3,#2	;underflow
+	jr	nz,under2
+
+	ld	r2,r0		;copy threshold
+	sub	r0,r7		;leaves modest #
+	resflg	c		;...for shift
+	call	shiftdigs 	;...denormalize
+	ld	r7,r2
+	jr	under3
+
+under2:
+	add	r7,r1
+
+under3:
+	ret
+
+;*************************************************
+;** round the result.
+;** Alternative ENTRY point foolsround allows
+;** custom setting of direction and precision --
+;** use it with care...
+;** Bumpup is used to inc by a unit in the last
+;** place....maybe.
+;** regs:
+;**	i --	rh0-direction
+;**		rl0-precision (fools only)
+;**	m --	r1-3
+;**	io --	r5=signals, r6-11=signedresult
+;************************************************
+	.GLOBAL  foolsround 		; LABEL
+	.GLOBAL  round  		; PROCEDURE ENTRY
+round:
+
+	ldb	rh0,r13(#93)
+	ldb	rl0,#00fh
+	andb	rl0,rh4
+
+foolsround:
+	subl	rr2,rr2		;clear for bump
+
+	bitb	rl0,#1
+	jr	nz,d_pre
+	bitb	rl0,#0
+	jr	nz,s_pre
+
+;extpre
+	ld	r1,#07FC0h
+	andb	rh1,rl5		;strip stickies
+	jr	z,round41
+	setb	rl5,#6
+round41:
+	andb	rl5,rl1
+	rr	r11    ;slip lsb into c, thence to rl5
+	rl	r11
+	rrcb	rl5
+
+	set	r3,#0		;for bump
+	jr	nowround
+ 
+d_pre:
+	ld	r1,#003ffh
+	and	r1,r11		;high stickies
+	orb	rl1,rl5		;low stickies
+	subb	rl5,rl5		;clear rnd bits
+	or	r1,r1
+	jr	z,round31
+	setb	rl5,#5
+round31:
+	ld	r1,#00C00h	;get lsb, g
+	and	r1,r11
+	rldb	rl1,rh1
+	orb	rl5,rh1
+	and	r11,#0f800h	;clear beyond
+	set	r3,#11		;set for bump
+	jr	nowround
+ 
+s_pre:
+	ld	r1,#0007fh	;getstickies...
+	and	r1,r9		;high
+	or	r1,r10		;low
+	orb	rl1,rl5		;lowest
+	subb	rl5,rl5
+	or	r1,r11
+	jr	z,round11
+	setb	rl5,#5
+round11:
+	ld	r1,#00180h	;mask for lsb,g
+	and	r1,r9
+	rr	r1
+	orb	rl5,rl1
+	subl	rr10,rr10	;blitz hi bits
+	and	r9,#0ff00h
+
+	set	r2,#8		;set for bump
+
+;*************************************************
+;** Now test mode to determine whether to increment
+;** or not.  Bit #4 of rl5 determines that.
+;*************************************************
+nowround: 
+	ldb	rl1,#060h
+	andb	rl1,rl5
+	jr	z,roundup  ;--no round error--
+
+	setb	rh5,#4	;inexact
+	bitb	rh0,#3
+	jr	nz,round60
+
+	bitb	rh0,#2
+	jr	z,nearest
+	jr	roundup	;chop is trivial
+
+round60:
+	bitb	rh0,#2
+	jr	z,plusinf
+
+minusinf:
+	bitb	rh6,#7		;test sign
+	jr	z,roundup
+	setb	rl5,#4
+	jr	roundup
+plusinf:
+	bitb	rh6,#7
+	jr	nz,roundup
+	setb	rl5,#4
+	jr	roundup
+nearest:
+	bitb	rl5,#6
+	jr	z,roundup
+	cpb	rl5,#040h ;half-way no go?
+	jr	eq,roundup
+	setb	rl5,#4
+ 
+
+;*************************************************
+;** In routines above set up rr2 so that bump by
+;** adding:
+;**           r8  r9  r10 r11
+;**        +  r1  r2  r1  r3
+;**       --------------------
+;** Know that r1 is 0 and either r2 or r3 has
+;** just one bit set.
+;*************************************************
+roundup:
+	bitb	rl5,#4
+	ret	z
+
+	sub	r1,r1
+	add	r11,r3
+	adc	r10,r1
+	adc	r9,r2
+	adc	r8,r1
+	ret	nc
+
+	set	r8,#15
+	add	r7,#1	;24 bit exp add
+	adcb	rl6,rl1    
+	ret
+ 
+;*************************************************
+;** Check Overflow  for each format.
+;** Regs:
+;**	 io --	r5=ERR, R6-11=op
+;**		r4=format
+;**	 m  --	rr0
+;*************************************************
+	.GLOBAL  over  		; PROCEDURE ENTRY
+over:
+
+;*************************************************
+;** Test for overflow.
+;** Respond with INF or rounded result.
+;** Needn't worry about 'large' underflows
+;** discussed, and dealt with, in testunder.
+;** Fact:  rl6 must be 0 at the outset.
+;**
+;** Regs:
+;**	io --	r4=format, r5=ERR, r6-11=op
+;**	m  --	rq0
+;*************************************************
+
+;*************************************************
+;** RANGE COERCION: remove the next two lines
+;*************************************************
+	bitb	rh4,#2	;nz -> extended
+	jr	nz,over34
+
+	bitb	rh4,#1	;nz -> double
+	jr	z,over31
+	ldl	rr0,#043FE0600h	;double
+	jr	over60
+
+over31:
+;*************************************************
+;** RANGE COERCION: add the two lines
+;**	bitb	rh4,#0
+;**	jr	z,over34
+;*************************************************
+	ldl	rr0,#0407E00C0h	;single
+	jr	over60
+
+over34:
+	ldl	rr0,#07FFE6000h	;extended
+
+over60:
+	cp	r0,r7	;compare with thresh
+	ret	uge	;whew, no oflow
+ 
+;*************************************************
+;** Wrap the exponent around if a trap is to occur
+;*************************************************
+	setb	rh5,#1		;overflow
+;#over%&@..Segmented Inefficiency..*+'&?@over#'[~_)(|#over
+	lda	r3,r13(#94)	;trap enables
+	bitb	@r3,#1		;overflow z => no trap
+	jr	z,over61
+
+	sub	r7,r1		;wrap around
+	ret
+
+;*************************************************
+;** Result is inexact, now decide whether result
+;** is +-HUGE or +-INF.
+;*************************************************
+over61:
+	setb	rh5,#4	;inexact	;inexact
+
+	andb	rh6,#080h	;isolate sign
+
+	ldb	rh1,#00Ch
+;#over%&@..Segmented Inefficiency..*+'&?@over#'[~_)(|#over
+	lda	r3,r13(#93)
+	andb	rh1,@r3	;get rnd mode
+
+;*************************************************
+;** Force infinity in cases:
+;**	rounding to nearest;
+;**	toward +INF and result positive
+;**	toward -INF and result negative
+;** Otherwise force huge number with result sign.
+;*************************************************
+	cpb	rh1,#000h
+	jr	eq,over68
+
+	orb	rh1,rh6	;sign OR round mode
+	cpb	rh1,#8
+	jr	eq,over68
+	cpb	rh1,#8ch
+	jr	eq,over68
+
+;*************************************************
+;** Form huge number of destination format.
+;*************************************************
+over63:
+	bit	r8,#15		;if unnorm...
+	jr	z,over66		;just exp
+
+over64:
+	ldl	rr10,#0ffffffffh ;...else huge
+	ldl	rr8,rr10
+
+	bitb	rh4,#0
+	jr	z,over66		;it's ext
+	bitb	rh4,#1
+	jr	nz,over643		;it's doub
+
+	subl	rr10,rr10
+	ld	r9,#0ff00h
+	jr	over66
+over643:
+	ld	r11,#0f800h
+
+over66:
+	ld	r7,r0   ;exp = thresh
+	ret
+ 
+over68:
+	subl	rr10,rr10	;INF
+	ldl	rr8,rr10
+	ld	r7,#07fffh
+	ret
+
+;*************************************************
+;** 10dec80 -- modified for emulator.
+;** 12jan81 -- non/segmented.
+;** 15feb82: normalize all extendeds.
+;*************************************************
+;** Deliver a result.
+;** Regs:
+;**	rr2 = work address
+;**	r4 = format; r5 = errors; r6-11 = op
+;*************************************************
+__text	.sect
+	.GLOBAL  delivery  		; PROCEDURE ENTRY
+delivery:
+
+	bitb	rh4,#2	;nz -> ext
+	jr	nz,Dlvry54
+	bitb	rh4,#1	;nz -> double
+	jr	nz,Dlvry53
+	jr	Dlvry51		;just single
+
+;*************************************************
+;** To pack an extended must normalize unnormalized
+;** values (not denormalized) and slide sign from
+;** rh6 to bit 15 or r7.
+;*************************************************
+Dlvry54:
+	or	r7,r7		;0/DENORM?
+	jr	z,Dlvry55
+	cp	r7,#07FFFh	;INF/NAN?
+	jr	eq,Dlvry55
+	call	normordigs
+Dlvry55:
+	rlc	r7	;open slot for sign
+	rlc	r6	;sign to C
+	rrc	r7
+;#Dlvry%&@..Segmented Inefficiency..*+'&?@Dlvry#'[~_)(|#Dlvry
+	ldl	rr2,r13(#124)
+	ldm	@r3,r7,#5
+	ret
+
+;*************************************************
+;** As in the unpack, single's special cases are
+;**  -- zero, whose exponent is zero
+;**  -- inf/NaN, whose exponent is huge
+;*************************************************
+Dlvry51:
+	or	r7,r7
+	jr	nz,Dlvry11
+
+	ld	r7,#03F81h
+	jr	Dlvry13
+Dlvry11:
+	cp	r7,#07FFFh
+	jr	nz,Dlvry13
+
+	ld	r7,#0407Fh
+	set	r8,#15     ; <-avoids exp dec
+Dlvry13:
+	sub	r7,#03F80h    ;bias-127
+	bit	r8,#15       ;if 0 or denorm...
+	jr	nz,Dlvry15
+	dec	r7
+Dlvry15:
+	rlc	r8	;...room for lo exp
+	rlc	r6	;sign into C
+	rrcb	rl7	;sign atop exp, lo exp
+	rrc	r8	;...into msb
+
+	;now reorder bytes
+	ld	r6,r8	;so's can move bytes
+	or	r7,r9	;counting on rl9 = 0
+	exb	rh7,rl7
+	exb	rl6,rh7
+	exb	rh6,rl6
+
+;#Dlvry%&@..Segmented Inefficiency..*+'&?@Dlvry#'[~_)(|#Dlvry
+	ldl	rr2,r13(#124)
+	ldl	@r3,rr6
+	ret
+ 
+ 
+Dlvry53:
+	or	r7,r7
+	jr	nz,Dlvry31
+
+	ld	r7,#03C01h	;denrm,0
+	jr	Dlvry33
+Dlvry31:
+	cp	r7,#07FFFh
+	jr	ne,Dlvry33
+	ld	r7,#043ffh	;inf,nan
+	set	r8,#15		;avoid exp dec
+Dlvry33:
+	sub	r7,#03c00h	;bias-1023
+	bit	r8,#15		;zero or denorm
+	jr	nz,Dlvry35
+
+	dec	r7
+ 
+Dlvry35:
+	rlc	r8  ;msb -> c
+	rrc	r7  ;low exp bit -> c
+	rrc	r8  ;c -> msb; exp is now aligned 
+ 
+	ldk	r0,#5
+Dlvry1:
+	rlc	r11
+	rlc	r10
+	rlc	r9
+	rlc	r8
+	rlc	r7
+	dec	r0
+	jr	nz,Dlvry1
+ 
+	rlc	r7    ;pick up sign
+	rlc	r6
+	rrc	r7
+;#Dlvry%&@..Segmented Inefficiency..*+'&?@Dlvry#'[~_)(|#Dlvry
+	ldl	rr2,r13(#124)
+	ldm	@r3,r7,#4
+	ret
+	.eject
+;*************************************************
+;** 15dec81: Has only data tables.
+;** 14jan81: OK'd For non/segmented use.
+;** 28jan81: regtab[] removed and literal addresses
+;**	used in toptab (rather than offsets.
+;** 27mar81: Latest 186fnoop operation names used.
+;** 28jan82: Remove Fexpl, Fsigq, Fscl, Fnxp,
+;**	Fnxm.  Add Ftil, Fldm.
+;** 15feb82: nor more Fnorm.
+;** 23feb82: nor more Fexm.
+;*************************************************
+;** Possibly extraneous label declarations for
+;** inclusion in small assemblies.
+;*************************************************
+__data	.sect
+	.GLOBAL Fclr, Fcpz, Fcpzx,Fcp, Fcpx, Fadd, Fsub, Fdiv, Fmul
+	.GLOBAL	Fremstep, Fld, Fldbcd, Fldil, Fldm, Ftil, Fabs, Fneg
+	.GLOBAL Fsqr, Fint, Fldctl, Fldctlb, Fresflg, Fsetflg,
+	.GLOBAL	Fsetmode, Fstp, Fnoop
+
+;*************************************************
+;** Operation startups:
+;*************************************************
+	.GLOBAL toptab
+toptab:
+	.word		Fclr,		Fcpz
+	.word		Fcpzx,		Fnoop
+	.word		Fnoop,		Fnoop
+	.word		Fnoop,		Fnoop
+	.word		Fnoop,		Fnoop
+	.word		Fnoop,		Fnoop
+	.word		Fnoop,		Fnoop
+	.word		Fnoop,		Fnoop
+
+	.word		Fnoop,		Fcp
+	.word		Fcpx,		Fnoop
+	.word		Fnoop,		Fnoop
+	.word		Fnoop,		Fnoop
+	.word		Fadd,		Fsub
+	.word		Fdiv,		Fmul
+	.word		Fremstep,	Fnoop
+	.word		Fnoop,		Fnoop
+
+	.word		Fld,		Fldbcd
+	.word		Fldil,		Fldm
+	.word		Ftil,		Fnoop
+	.word		Fnoop,		Fnoop
+	.word		Fabs,		Fneg
+	.word		Fnoop,		Fnoop
+	.word		Fsqr,		Fint
+	.word		Fnoop,		Fnoop
+
+	.word		Fldctl,		Fldctlb
+	.word		Fresflg,	Fsetflg
+	.word		Fsetmode,	Fnoop
+	.word		Fnoop,		Fnoop
+	.word		Fnoop,		Fnoop
+	.word		Fnoop,		Fnoop
+	.word		Fnoop,		Fnoop
+	.word		Fnoop,		Fstp
+
+;*************************************************
+;** Change history:
+;** 27feb81: Constants for use by interface.
+;** 18mar81: Handle system/normal seg-/nonseg-.
+;** 27mar81: Reorganize for easier reading.
+;** 30mar81: System dependent code pulled out.
+;** 09may81: new free/need cpu markers.
+;** 14jun81: fix system trap signals.
+;** 21jan82: took out references to needcpu and
+;**	freecpu
+;** 28jan82: size of mem buffer parameterized --
+;**	in honor of increase from 20 to 30 bytes.
+;** 11feb82: don't reset O/U flags in directed
+;**	rounding, and make it clear that rr4
+;**	is used on return from jp at 'decoded:'
+;*************************************************
+;** Entry points of system-dependent routines:
+;*************************************************
+	.GLOBAL  stareg
+	.GLOBAL  staevnt
+	.GLOBAL  stafcw
+	.GLOBAL  stapcsg
+	.GLOBAL  gettext 		; LABEL
+	.GLOBAL  getmem  		; LABEL
+	.GLOBAL  putmem  		; LABEL
+
+;*************************************************
+;** The entry point to the emulator
+;** Toptab is a table of 64 startup addresses.
+;*************************************************
+frm_set	.equ	24h
+	.GLOBAL	fp_epu
+__text	.sect
+fp_epu:
+	NONSEG			;Do NOT want to be
+				;segmented
+
+	ld	r6,r15(#frm_set+2) ;* r6= host fcw
+	bit	r6,#14		;* was the host in system (1),
+				;*              or normal (0) mode ?
+	jr	z,epu_n		;* normal mode host, fetch normal SP
+
+epu_s:		;* system mode host: stuff prior system SP into the frame
+
+	ld	r9,r15		;* r9= system SP offset
+	add	r9,#frm_set+6	;* reset system SP to before saving environment
+	ld	r15(#frm_set-2),r9 ;* save the proper host SP offset into frame
+	ld	r9,r15		;* r9= cpu state parameter
+	ld	r13,#epuwp	;* r13= pointer to fpe work area
+	calr	epu
+	jr	epu_x		;* jump to common exit procedure
+
+epu_n:
+	ldctl	r9,nspoff	;* r9= normal SP offset
+	ld	r15(#frm_set-2),r9 ;* save the normal host SP seg,
+				;*        offset into frame
+	ld	r9,r15		;* r9= cpu state parameter
+	ld	r13,#epuwp	;* r13= pointer to fpe work area
+	calr	epu
+
+epu_x:
+	testb	rh2		;* hang on error
+$1:	jr	nz,$1		;* install a trap mechanism
+
+	SEG			;* Was always called SEG
+
+	ret
+
+;*************************************************
+;** The decode phase of the software package.
+;** Entry register structure:
+;**	r15 = stack ptr
+;**	r13 = work ptr
+;**	r9  = state ptr
+;** Build up structure:
+;**	r10  = op1 = first instr word
+;**	r11  = op2 = second instr word
+;**	r2   = format (dst,src)
+;** Exit register structure:
+;**	as above, but format to r4.
+;*************************************************
+epu:
+
+;*************************************************
+;** Save state ptr and get first two instruction
+;** words.  First is part of saved CPU state.
+;*************************************************
+	ldl	r13(#132),rr8
+	ld	r10,staevnt	;offset to...
+	ld	r10,r9(r10)	;1st inst word
+
+;*************************************************
+;** Second instruction word is pulled from
+;** instruction stream, with the PC suitably
+;** incremented, by getiword().
+;*************************************************
+	calr	getiword
+	ld	r11,r3		;returned word
+
+;*************************************************
+;** Get the rounding precision, if any,
+;** and store to r2=format.
+;*************************************************
+	ld	r2,#03000h	;mask rnd bits
+	and	r2,r11		;into dst format
+	rrdb	rl2,rh2
+
+;*************************************************
+;** For the emulator's purposes, there are 3 groups
+;** of instructions:
+;**	(1) internal operands only, perhaps
+;**	    involving the cpu flags.
+;**	(2) dst or src from cpu reg file.
+;**	(3) dst or src from user memory.
+;** The latter 2 are broken into to- and fro-
+;** variants.
+;*************************************************
+	bit	r10,#8	;0 --> internal op
+	jr	nz,fpepu10
+
+;*************************************************
+;** Internal, so presume src reg in word 2 and
+;** dst in reg1.
+;*************************************************
+	calr	src2
+	calr	dst1
+	jr	decoded
+
+;*************************************************
+;** External, so either mem or CPU.  Presume
+;** second operand is EPU register.
+;*************************************************
+fpepu10:
+	bit	r10,#2
+	jr	nz,fpepu15	;0 --> cpu
+
+	bit	r10,#3
+	jr	nz,fpepu12	;cpu: 0 --> output
+
+
+;*************************************************
+;** Dst is cpu, presume src EPU reg #in word 1.
+;** Get_cpu sets up address in r7, format in rl5;
+;** then dst99 tucks that info away.
+;*************************************************
+	calr	src1
+	calr	get_cpu
+	calr	dst99
+	jr	decoded
+
+;*************************************************
+;** Src is cpu, presume dst reg #in word 1.
+;*************************************************
+fpepu12:
+	calr	dst1
+	calr	get_cpu
+	calr	src99
+	jr	decoded
+
+
+;*************************************************
+;** Check out memory operation.
+;*************************************************
+fpepu15:
+	bit	r10,#3
+	jr	nz,fpepu17	; 0 --> input 
+
+;*************************************************
+;** Memory input -- Rather than just load
+;** op address, the actual operand is fetched from
+;** the trapee's address space into a buffer on
+;** the emulator's stack.  Yankmem() fetches.
+;*************************************************
+	calr	dst2	;assume dst is reg
+	calr	yankmem
+	jr	decoded
+
+
+;*************************************************
+;** Memory output -- Set up stack buffer and mark
+;** operand for later stuffing.
+;*************************************************
+fpepu17:
+	calr	src2
+	calr	willstuffmem
+	jr	decoded
+
+
+;*************************************************
+;** Post-unpack -- With the operand addresses in
+;** place we're ready to jump to operation startup.
+;** Save instr words in work area.
+;** Transfer format from r2 to r8.
+;** Use opcode to index into operation table.
+;*************************************************
+decoded:
+	ldl	r13(#120),rr10
+	ld	r8,r2
+
+	ld	r1,#0C0F0h	;mask opcode
+	and	r1,r11		; 0Ch0F0 
+	rlb	rh1,#2		; 00h3F0 
+	rr	r1,#2		; 00h0FC 
+
+;*************************************************
+;** Pure addresses are in toptab().
+;*************************************************
+	rr	r1,#1
+	ld	r11,toptab(r1)
+
+;************************************************
+;** r0-7 must free for external calls.
+;************************************************
+	ld	r4,r8	;restore format word
+	sub	r5,r5	;clean slate of errors
+
+;*************************************************
+;** While grinding away at the arithmetic, emulator
+;** keeps the format word in r4, error flags in
+;** rh5, and possible CPU flags in rl5.
+;*************************************************
+	call	@r11
+;*************************************************
+;** Expect: format word in r4, error and cpu flags
+;** in r5.
+;*************************************************
+
+	ldl	rr8,rr4	;save format/error
+	ldl	rr4,rr8	;restore format/error
+
+
+;*************************************************
+;** VERY IMPORTANT FOR CUSTOM-MADE INSTRUCTIONS
+;** NOT FOLLOWING USUAL UNPACK/OPERATE/PACK SEQ.
+;**
+;** After call to arithmetic hacker @r11, depend
+;** on format word in r4, errors in rh5, and
+;** possibly CPU flags in rl5.
+;*************************************************
+
+;*************************************************
+;** As the last steps:
+;** (1) See if CPU flags must be stuffed from rl5.
+;*************************************************
+	ld	r0,r13(#120)
+	and	r0,#0010Ch	;0 --> load FCW
+	jr	nz,fpepu21
+
+	ldl	rr2,r13(#132)
+	add	r3,stafcw	;offset to fcw...
+	inc	r3,#1		;on to flags byte
+	ldb	@r3,rl5		;store new flags
+
+;*************************************************
+;** (2) used to clear o/uflow flags if directed
+;**	rounding, but st'd changed.
+;*************************************************
+fpepu21:
+;	ldb	rl0,r13(#93) 
+;	bitb	rl0,#3 
+;	jr	z,fpepu23 
+;	andb	rh5, #LNOT (ERROU)	kill o/u
+
+;************************************************
+;** (3) save rh5 (errs) in sticky flags;
+;**	and in last op flags.
+;************************************************
+fpepu23:
+	ldb	rl0,r13(#91)	;error byte	;sticky errs
+	orb	rl0,rh5
+	ldb	r13(#91),rl0	;error byte
+	ldb	r13(#90),rh5	;errors on last op
+
+;************************************************
+;** (4) mark SYSERRS(high byte) if trap needed;
+;************************************************
+	ldb	rh0,r13(#94)	;trap enables
+	andb	rh0,rh5		;error & trap
+	ldb	r13(#136),rh0
+
+;*************************************************
+;** (5) Stuff any memory output; if either memory
+;**	in- or out-, and restore stack
+;*************************************************
+fpepu191:
+	bitb	rh4,#6
+	jr	z,fpepu192
+	calr	stuffmem
+	jr	fpepu195
+fpepu192:
+	bitb	rl4,#6
+	jr	z,fpepu197
+fpepu195:
+	add	r15,#20	;bytes, that is
+fpepu197:
+;*************************************************
+;** (6) Stuff error val to rh2(emulator),
+;**	rl2(system).
+;*************************************************
+	ld	r2,r13(#136)
+
+;************************************************
+;** (OMEGA) and begone...
+;************************************************
+
+	ret			;...to host sys
+
+
+;*************************************************
+;** Little routines to construct addresses
+;** of epu register operands:
+;** First, destination is epu register...
+;*************************************************
+dst2:
+	calr	reg2
+	jr	dst99
+dst1:
+	calr	reg1
+dst99:
+	orb	rh2,rl3
+	ldl	r13(#124),rr6
+	ret
+
+;*************************************************
+;** Now, src is epu register...
+;*************************************************
+src2:
+	calr	reg2
+	jr	src99
+src1:
+	calr	reg1
+src99:
+	orb	rl2,rl3
+	ldl	r13(#128),rr6
+	ret
+
+;*************************************************
+;** Get addresses of epu register operands.  Seg
+;** number, if any, is in r12 (from r13).
+;** Format: rl3   Address: r7
+;** Use knowledger that 	0 = 0 to avoid add
+;** immediate after reg99.
+;*************************************************
+reg2:
+	ld	r7,r11
+	rrdb	rh7,rl7
+	jr	reg99
+reg1:
+	ld	r7,r10
+reg99:
+	and	r7,#0F0h	;want 10*reg
+	rr	r7,#1		;8*reg
+	ld	r6,r7
+	rr	r7,#2		;2*reg
+	add	r7,r6		;10*reg, at last
+	add	r7,r13		;reg at start...
+	ld	r6,r12
+	ldb	rl3,#84h
+	ret
+
+
+;*************************************************
+;** Make address of cpu operand in r7, format
+;** in rl3.  Use (src/dst)99 to put this info away.
+;*************************************************
+get_cpu:
+	ld	r7,stareg	;offset of cpu's
+	lda	r7,r9(r7)
+	ld	r3,#00F0Fh	;mask reg & wrds
+	and	r3,r11
+	ldb	rl0,rh3		;register #
+	subb	rh0,rh0		;clear hi byte
+	add	r0,r0		;to index words
+	add	r7,r0
+	ret
+
+
+;*************************************************
+;** The system-independent memory routines.
+;** The actual data transfer is handled
+;** in the system-dependent section.  Error values
+;** returned in rl2 are OR-ed into cumulative log.
+;*************************************************
+memerr:
+	ldb	rl0,r13(#137)
+	orb	rl0,rl2		;error byte in rl2
+	ldb	r13(#137),rl0
+	ret
+
+;*************************************************
+;** Coordinate fetching of word from instruction
+;** stream, making sure to save errors (in rl2)
+;** and increment PC.
+;*************************************************
+getiword:
+	ld	r5,stapcsg	;offset user PC
+	lda	r5,r9(r5)	;adrs of user PC
+
+	ldl	rr6,@r5	;user PC itself
+	inc	r5,#2		;...to offest
+	inc	@r5,#2		;inc saved PC
+	call	gettext		;sys-dependent
+	jr	memerr
+
+;*************************************************
+;** Fetch memory input -- memadrs() places adrs in
+;** r7, format in rl3, carefully preserving r2
+;** format info and return pointer.
+;*************************************************
+yankmem:
+	calr	memadrs	;set up address in r7
+	ldl	r13(#140),rr6
+
+	orb	rl2,rl3	;place format
+	setb	rl2,#6
+
+	inc	r3,#1	;true word count
+	add	r3,r3	;byte count
+
+	pop	r1,@r15	;save return adrs
+	sub	r15,#20	;bytes, that is	;size of buff
+	ldl	r13(#128),rr14
+	ldl	rr4,rr14
+	push	@r15,r1	;restore return adrs
+
+	push	@r15,r2	;save formats
+	call	getmem
+	calr	memerr
+	pop	r2,@r15	;restore formats
+	ret
+
+;*************************************************
+;** BUILD MEMORY WORD -- leaving format in rl3,
+;** 'source' address in ra6.
+;*************************************************
+memadrs:
+	bit	r10,#14	;1 --> X or DA mode
+	jr	z,fpepu560
+
+;#%&@..Segmented Inefficiency..*+'&?@#'[~_)(|#
+	pushl	@r15,rr2	;save format
+	calr	getiword	;first adrs word
+	ld	r7,r3		;returned adrs
+	popl	rr2,@r15	;restore format
+
+;*************************************************
+;** Remember, if trapee was segmented, there MAY
+;** be a 2-word address...
+;*************************************************
+	ld	r1,stafcw	;offset of fcw
+	ld	r0,r9(r1)
+	bit	r0,#15		;1 --> segmented
+	jr	z,fpepu556
+
+;*************************************************
+;** SEGMENTED USERS -- check for short/long offset.
+;*************************************************
+	bit	r7,#15		;0 --> short form
+	jr	nz,fpepu553
+
+	ldb	rh6,rh7		;seg no.
+	subb	rl6,rl6		;unused
+	ldb	rh7,rl6		;high offset
+	jr	fpepu556
+fpepu553:
+	push	@r15,r2		;save format
+	push	@r15,r7		;save seg no.
+	calr	getiword
+	ld	r7,r2		;returned adrs
+	pop	r6,@r15		;seg no.
+	pop	r2,@r15		;format
+
+;*************************************************
+;** If X mode must get register index...
+;*************************************************
+fpepu556:
+	ld	r1,#000F0h	;mask for reg#
+	and	r1,r10		;non0 if X
+	jr	z,fpepu567
+
+	rr	r1,#2		;align reg #
+	rr	r1,#1		;for word index
+	add	r1,stareg	;register offset
+;#%&@..Segmented Inefficiency..*+'&?@#'[~_)(|#
+	ld	r0,r9(r1)	;fetch cpu reg
+	add	r7,r0
+	jr	fpepu567
+
+;*************************************************
+;** Mode IR or IM.  IM on Z8000 is actually IR
+;** through r0 with forced count of 1, so we treat
+;** it as IR.
+;** Get fcw early, while r1 is available as index.
+;*************************************************
+fpepu560:
+	ld	r1,stafcw	;offset to fcw
+	ld	r0,r9(r1)
+
+	ld	r1,#000F0h	;mask for reg#
+	and	r1,r10		;non0 if IR,X
+
+	rr	r1,#2		;align reg #
+	rr	r1,#1		;for word index
+
+;*************************************************
+;** Segmented trapee must have even reg no. and
+;** long address.  Load fcw to r0 above.
+;*************************************************
+	bit	r0,#15	;1 --> segmented
+	jr	z,fpepu566
+
+	res	r1,#1		;even reg no.
+fpepu566:
+	add	r1,stareg
+	ld	r7,r9(r1)	;fetch cpu reg
+fpepu567:
+	ldk	r3,#0000Fh	;count mask
+	and	r3,r11		;the count
+	ret
+
+;*************************************************
+;** Set up memory output -- Allocate stack buffer
+;** and mark operand.  Be careful of stack -- its
+;** top is a return address.
+;*************************************************
+willstuffmem:
+	calr	memadrs
+	ldl	r13(#140),rr6
+
+	pop	r5,@r15
+	sub	r15,#20	;bytes, that is	;size of buffer
+	ldl	r13(#124),rr14
+
+	ldb	rl1,#00Fh	;mask wrd#
+	and	r1,r11
+	setb	rl1,#6
+	orb	rh2,rl1
+	jp	@r5
+
+
+;*************************************************
+;** Store memory -- Uses getmem but must reverse
+;** order of addresses for putmem.
+;*************************************************
+stuffmem:
+;first get state ptr, format, and
+;instruction words
+	ldl	rr8,r13(#132)
+	ldl	rr10,r13(#120)
+
+	ldl	rr4,r13(#140)
+
+	ldl	rr6,r13(#124)
+	ld	r3,#0000Fh
+	and	r3,r11
+	inc	r3,#1	;true count of words
+	add	r3,r3	;byte count
+
+	call	putmem
+	calr	memerr	;record errors
+	ret
+
+;*************************************************
+;** 01feb81: built from scratch
+;** 25feb81: avoid o/u check on 0, INF, ...
+;** 02mar81: include neg, abs
+;** 07mar81: suppress normalizing extendeds.
+;** 10apr81: avoid 1 SHL 0, q.v.
+;** 17apr81: Fldp finally added.
+;** 09may81: rounding error Fint; general trims
+;** 26may81: seg/nonseg bug in case test fixed.
+;** 15jun81: several bugs in load -- note that
+;**	funny operands must be 'delivered',
+;**	so donone is a disaster.
+;** 28jan82: fabs and fneg are not allowed to have
+;**	EPU -> CPU/MEM addressing modes, though
+;**	emulator has no means of checking this
+;**	-- no change today.
+;** 28jan82: remove Fldp (c.f. 17apr81), replace
+;**	by Fldm which copies 1 to 2 registers,
+;**	verbatim, without arithmetic processing.
+;** 15feb82: no more unnorm 0, no more Fnorm.
+;** 19mar82: changed donone to dotrap which delivers NNaN if necessary
+;**************************************************************************
+
+;*************************************************
+;** Use jump table though just two cases:
+;** Typical case & Unnormal zero are handled as
+;** numbers; 0, INF, NaNs just delivered.
+;** Negate/Abs value differ only in sign handling.
+;*************************************************
+__data	.sect
+	.GLOBAL actld
+actld:					; ARRAY [* WORD] := [
+	.word	ldno,   donone, donone, ldnan
+	.word	donone, donone, donone, donone
+	.word	donone, donone, donone, donone
+	.word	donone, donone, donone, donone
+	.word	dotrap
+
+__text	.sect
+
+	.GLOBAL donone 		; LABEL
+	.GLOBAL dotrap 		; LABEL
+	.GLOBAL ldno   		; LABEL
+	.GLOBAL ldnan   	; LABEL
+
+	.GLOBAL Fclr 		; LABEL
+	.GLOBAL Fneg 		; LABEL
+	.GLOBAL Fabs 		; LABEL
+
+	.GLOBAL Fld  		; PROCEDURE ENTRY
+Fld:
+
+	or	r4,#02010h
+	call	setup
+Fld2:
+	ld	r3,actld(r1)
+	call	@r3
+Fld4:
+	call	delivery
+	ret
+
+;*************************************************
+;** fneg -- only flips src sign, else just an fld.
+;*************************************************
+Fneg:
+	or	r4,#02010h
+	call	setup
+	xorb	rh6,#080h
+	jr	Fld2
+
+;*************************************************
+;** abs -- clears src sign, else just an fld.
+;*************************************************
+Fabs:
+	or	r4,#02010h
+	call	setup
+	resb	rh6,#7
+	jr	Fld2
+
+;*************************************************
+;** clr -- just stuff a zero, set r1 as though
+;** it were unpacked, and fld...
+;*************************************************
+Fclr:
+	or	r4,#02000h
+	call	setup
+	call	reszero
+	jr	Fld4
+
+;*************************************************
+;** Nan's must be trimmed and loaded.
+;*************************************************
+ldnan:
+	call	resnsrc
+	ret
+
+;*************************************************
+;** finite numbers from normal 0 and INF (quicks)
+;*************************************************
+ldno:
+	call	under
+	call	round
+	call	over
+	ret
+
+
+;*************************************************
+;** 28jan82: fldm added from scratch; three reg.
+;**	option forced increase of stack buffer
+;**	(epuindface.s) from 20 to 30 bytes.
+;** 11feb82: fldm may move 1 or 2 only, so bring
+;**	buffer back to 20.  Be sure rr4 is saved
+;**	across call.
+;*************************************************
+
+;*************************************************
+;** Fldm simply copies 1 or 2 extendeds from
+;** input to output.  It is never exceptional.
+;** Be sure to preserve rr4, with no errors.
+;*************************************************
+	.GLOBAL Fldm 		; PROCEDURE ENTRY
+Fldm:
+;*************************************************
+;** Last nibble of second instruction word contains
+;** count (less one) of the number of words to be
+;** copied.
+;*************************************************
+	ld	r1,r13(#122)	;2nd instr word
+	and	r1,#00Fh		;mask count bits
+	inc	r1,#1		;true word cnt
+	ldl	rr2,r13(#124)	;dest
+	ldl	rr6,r13(#128)	;src
+	ldir	@r3,@r7,r1	;move 'em
+
+;*************************************************
+;** Rats: this is ugly, because an interface
+;** change in epuindface.s can cause these cleanup
+;** sequences to change in obscure instructions
+;** like Fldm.
+;*************************************************
+	sub	r5,r5		;no errors
+	ret
+
+
+;*************************************************
+;** 28Dec80  Round to integer, and more...
+;** 15jan81 -- non/segmented form.
+;** 6mar81 -- coordinated with load.
+;** 27may81 -- add jump table
+;*************************************************
+	.GLOBAL actint
+__data	.sect
+actint:					; ARRAY [* WORD] := [
+	.word	intno,  donone, donone, resnsrc
+	.word	donone, donone, donone, donone
+	.word	donone, donone, donone, donone
+	.word	donone, donone, donone, donone
+	.word	dotrap
+
+__text	.sect
+	.GLOBAL donone 		; LABEL
+	.GLOBAL intu0 		; LABEL
+	.GLOBAL intno 		; LABEL
+
+	.GLOBAL Fint 		; PROCEDURE ENTRY
+Fint:
+	or	r4,#02010h
+	call	setup
+
+	ld	r3,actint(r1)
+	call	@r3
+
+	call	delivery
+	ret
+
+;*************************************************
+;** unnormal 0 to normal 0...
+;*************************************************
+intu0:
+	and	r6,#08000h	;to normal 0
+	sub	r7,r7
+	ret
+
+;*************************************************
+;** Round to the precision specified for the
+;** result.
+;*************************************************
+intno:
+	call	normordigs	;first normalize
+
+	ld	r1,#0403Eh	;assume 63
+	bitb	rh4,#0	;test precision
+	jr	z,Fint23		;guessed right
+
+	bitb	rh4,#1
+	jr	z,Fint21
+
+	ld	r1,#04033h	;biased 52
+	jr	Fint23
+Fint21:
+	ld	r1,#04016h	;23
+Fint23:
+	ld	r0,r1	;working copy
+	sub	r0,r7
+	jr	le,Fint27	;already integral
+
+	call	shiftdigs	;r1 is safe
+	ld	r7,r1	;new exponent
+	subb	rl6,rl6
+Fint27:
+	call	round
+
+;************************************************
+;** Save rounding bits across normalization.
+;************************************************
+	ldb	rl1,rl5		; rnd bits
+	subb	rl5,rl5
+	call	normordigs	;won't touch r1
+	ldb	rl5,rl1
+
+	call	over
+	ret
+
+;*************************************************
+;**  9mar81: dec->bin built from scratch
+;** 22mar81: special cases cleaned up.
+;** 28jan82: 1860 spec has new setting of W error
+;**	flag -- already in emulator.
+;** 15feb82: no more unnorm 0.
+;*************************************************
+
+__data	.sect
+	.GLOBAL actldd
+actldd:					;  ARRAY [* WORD] := [
+	.word	lddno,  ldd0,   lddjnk, lddjnk
+	.word	donone, donone, donone, donone
+	.word	donone, donone, donone, donone
+	.word	donone, donone, donone, donone
+	.word	donone
+
+__text	.sect
+	.GLOBAL donone    		; LABEL
+	.GLOBAL   lddjnk    		; LABEL
+	.GLOBAL   lddno     		; LABEL
+	.GLOBAL   ldd0      		; LABEL
+	.GLOBAL intadjust 		; LABEL
+
+	.GLOBAL   Fldbcd    		; PROCEDURE ENTRY
+Fldbcd:
+;*************************************************
+;** Since decimals and extendeds are of same size,
+;** use register bit to distinguish.
+;*************************************************
+	bitb	rh4,#7
+	jr	z,frombin
+
+	or	r4,#02000h
+	call	setup
+
+	subl	rr8,rr8		;flush rq8
+	ldl	rr10,rr8
+
+	ldl	rr2,r13(#128)
+	pop	r1,@r3
+	push	@r15,r1	;save sign
+	and	r1,#00FFFh
+
+;*************************************************
+;** NAN and INF will be marked by invalid digits.
+;*************************************************
+	pushl	@r15,rr12	;save r13
+	pushl	@r15,rr4	;save formats and flags
+
+;*************************************************
+;** Now transfer 5 4-digit numbers.  Clear r0.
+;*************************************************
+	sub	r0,r0
+	calr	Flbcd10
+	pop	r1,@r3
+	calr	Flbcd10
+	pop	r1,@r3
+	calr	Flbcd10
+	pop	r1,@r3
+	calr	Flbcd10
+	pop	r1,@r3
+	calr	Flbcd10
+
+	popl	rr4,@r15	;formats and flags
+	popl	rr12,@r15	;r13
+	pop	r6,@r15	;sign and junk
+	and	r6,#08000h
+	ld	r7,#03fffh+03fh	;exp = 63
+	bitb	rh5,#7	;integer overflow
+	jr	z,Flbcd8
+
+;*************************************************
+;** Stuff a NaN; but mark invalid integer.
+;*************************************************
+	call	resinv
+	resb	rh5,#0	;invalid operation
+	jr	Flbcd9
+
+;*************************************************
+;** Finish off a valid number, possibly zero.
+;*************************************************
+Flbcd8:
+	call	normordigs
+	call	round
+Flbcd9:
+	call	delivery
+	ret
+
+
+
+;*************************************************
+;** Add a 4 digit number into rq8 integer.  r0=0
+;** r1=number; rq4=spare int; rr12=free.
+;*************************************************
+Flbcd10:
+	ldk	r12,#4
+Flbcd11:
+	addl	rr10,rr10	; * 2
+	adc	r9,r9
+	adc	r8,r8
+	ldl	rr4,rr8		; save * 2
+	ldl	rr6,rr10	; save * 2
+	addl	rr10,rr10	; * 4 (more)
+	adc	r9,r9
+	adc	r8,r8
+	addl	rr10,rr10
+	adc	r9,r9
+	adc	r8,r8
+	addl	rr10,rr6	; * 10
+	adc	r9,r5
+	adc	r8,r4
+	rldb	rl0,rh1		; add next
+	rldb	rh1,rl1
+
+	cp	r0,#9
+	jr	ugt,Flbcd20	;phony BCD?
+	add	r11,r0
+	djnz	r12,Flbcd11
+	ret
+
+Flbcd20:
+;#Flbcd%&@..Segmented Inefficiency..*+'&?@Flbcd#'[~_)(|#Flbcd
+	ld	r5,r15(#4)
+	setb	rh5,#7	;integer overflow
+	ld	r15(#4),r5
+	ret
+
+
+;*************************************************
+;** bin to decimal is tricky:
+;*************************************************
+frombin:
+	or	r4,#00010h
+	call	setup
+
+	ld	r3,actldd(r1)
+	call	@r3
+	ret
+
+;*************************************************
+;** Un and Normal 0...
+;*************************************************
+ldd0:
+	sub	r7,r7
+	ldb	rl6,rl7
+	jr	Flbcd55
+
+;*************************************************
+;** Handle nonzero numbers.
+;*************************************************
+lddno:
+	call	intadjust
+	bitb	rh5,#7	;integer overflow
+	jr	nz,Flbcd50	;overflow case
+
+	ldl	rr0,#08AC72304h
+	cpl	rr8,rr0
+	jr	ugt,Flbcd50
+	jr	ult,Flbcd35
+	ldl	rr0,#089E80000h
+	cpl	rr10,rr0
+	jr	uge,Flbcd50
+Flbcd35:
+	pushl	@r15,rr12	;save r13
+	pushl	@r15,rr4		;formats...
+	push	@r15,r6		;sign
+
+	ldl	rr4,rr8
+	ldl	rr6,rr10
+	ldl	rr2,#0DE0B6B3Ah
+	ldl	rr12,#076400000h
+	ld	r0,#65
+	call	nonrestore
+
+;*************************************************
+;** After nonrestoring division, rq8 is the
+;** chopped quotient.  Inc it, watching carry.
+;*************************************************
+	subl	rr0,rr0	;need this below
+	add	r11,#1
+	adc	r10,r0
+	adc	r9,r0
+	adc	r8,r0
+	ldl	rr4,rr8	;quo in rr4,rr10
+
+	ldl	rr2,rr0
+	pop	r7,@r15	;sign
+	and	r7,#08000h
+
+;*************************************************
+;** 19-step loop strips digit from lead nibble of
+;** rh4; stores into integer in r7,rq0; and mults
+;** rr4,rr10 by 10.
+;*************************************************
+	ld	r6,#19	;0 high, counter low
+Flbcd37:
+	rldb	rh7,rl7
+	rldb	rl7,rh0
+	rldb	rh0,rl0
+	rldb	rl0,rh1
+	rldb	rh1,rl1
+	rldb	rl1,rh2
+	rldb	rh2,rl2
+	rldb	rl2,rh3
+	rldb	rh3,rl3
+	rldb	rl3,rh4
+	rrdb	rh6,rh4	;realign lead nibble, with 0
+	decb	rl6,#1
+	jr	z,Flbcd39
+
+	addl	rr10,rr10	;quo * 2
+	adc	r5,r5
+	adc	r4,r4
+	ldl	rr12,rr10
+	ldl	rr8,rr4
+	addl	rr10,rr10	;quo * 8
+	adc	r5,r5
+	adc	r4,r4
+	addl	rr10,rr10
+	adc	r5,r5
+	adc	r4,r4
+	addl	rr10,rr12
+	adc	r5,r9
+	adc	r4,r8
+	jr	Flbcd37
+Flbcd39:
+	ldl	rr10,rr2
+	ldl	rr8,rr0
+	popl	rr4,@r15
+	popl	rr12,@r15
+	jr	Flbcd55
+
+;*************************************************
+;** Inf or NaNs cannot be faithfully represented.
+;*************************************************
+lddjnk:
+Flbcd50:
+	setb	rh5,#7	;integer overflow
+	ldl	rr10,#0FFFFFFFFh
+	ldl	rr8,rr10
+	ld	r7,r8
+	or	r6,#00FFFh
+Flbcd55:
+	ldl	rr2,r13(#124)
+	ldm	@r3,r7,#5
+
+	ret
+
+;*************************************************
+;** 28DEC80 Floating -- Binary Integer Conversion
+;** 15jan81: non/segmented form.
+;** 07mar81: emulator form.
+;** 13mar81: isolate 'intadjust' routine.
+;** 27may81: add jump table.
+;** 28jan82: add truncation version, and a few
+;**	comments in Fldil.
+;*************************************************
+
+;INTERNAL
+__data	.sect
+	.GLOBAL actldi
+actldi:					; ARRAY [* WORD] := [
+	.word	ldino,  ldi0,   ldijnk, ldijnk
+	.word	donone, donone, donone, donone
+	.word	donone, donone, donone, donone
+	.word	donone, donone, donone, donone
+	.word	donone
+
+__text	.sect
+
+	.GLOBAL donone 		; LABEL
+	.GLOBAL dotrap 		; LABEL
+	.GLOBAL   ldijnk 		; LABEL
+	.GLOBAL   ldino  		; LABEL
+	.GLOBAL   ldi0   		; LABEL
+	.GLOBAL   intadjust 		; LABEL
+
+	.GLOBAL   Fldil  		; PROCEDURE ENTRY
+Fldil:
+;*************************************************
+;** This routine handles Fldiq as well.
+;** Two fundamentally different cases must be
+;** distinguished:
+;**   INT -> EXT is always kosher, except perhaps
+;**	for a rounding error.
+;**   EXT -> INT can go foul when one of the
+;**	unrepresentable animals occurs.
+;** The cases are distinguished by the 2 bit
+;** of the format word.
+;*************************************************
+	bitb	rh4,#2
+	jr	z,Flil20
+
+
+;*************************************************
+;** CASE: INT -> EXT
+;** Conversion from a 32 or 64 bit integer is
+;** very benign.  At worst a rounding error can
+;** arise.
+;*************************************************
+Flil70:
+	or	r4,#02000h	;don't treat inpt
+				;as floating
+	call	setup
+
+;*************************************************
+;** Get operand address, then test format byte for
+;** 32 or 64 bit case, determined by output float
+;** format.
+;*************************************************
+;#Flil%&@..Segmented Inefficiency..*+'&?@Flil#'[~_)(|#Flil
+	ldl	rr6,r13(#128)
+	bitb	rl4,#1	;32? or 64?
+	jr	nz,Flil71		;non0 => Quad
+
+	ldl	rr10,@r7	;32-bit src int
+	extsl	rq8
+	jr	Flil72
+Flil71:
+	ldm	r8,@r7,#4	;64-bit src int
+Flil72:
+;*************************************************
+;** In case of trap, store operand in the work
+;** area (as though 64 bits wide).
+;*************************************************
+;#Flil%&@..Segmented Inefficiency..*+'&?@Flil#'[~_)(|#Flil
+	lda	r3,r13(#108)
+	ldm	@r3,r8,#4
+
+;*************************************************
+;** load mask to strip sign, and exponent of biased
+;** 63 to place binary pt. at right.
+;*************************************************
+	ldl	rr6,#08000403Eh
+	and	r6,r8		;real sign
+	jr	z,Flil75
+
+;*************************************************
+;** If it's negative, must get magnitude.
+;*************************************************
+	subl	rr0,rr0
+	ldl	rr2,rr0
+	subl	rr2,rr10
+	sbc	r1,r9
+	sbc	r0,r8
+	ldl	rr10,rr2
+	ldl	rr8,rr0
+
+Flil75:
+	call	normordigs
+	call	round
+	call	delivery
+	ret
+
+
+;*************************************************
+;** CASE: EXT -> INT
+;** Special cases:
+;** Normal and unnormal 0 --> 0
+;** NaN and INF --> large int with sign
+;** Number --> number
+;*************************************************
+Flil20:
+	or	r4,#00010h	;src is floating
+	call	setup
+
+	ld	r3,actldi(r1)
+	call	@r3
+
+	;now deliver 32 or 64 bit number
+;#Flil%&@..Segmented Inefficiency..*+'&?@Flil#'[~_)(|#Flil
+	ldl	rr2,r13(#124)
+	bitb	rh4,#1
+	jr	nz,Flil21
+
+	ldl	@r3,rr10
+	jr	Flil22
+Flil21:
+	ldm	@r3,r8,#4
+Flil22:
+	ret
+
+
+
+;*************************************************
+;** Special cases for conversion to integer:
+;**
+;**  0 (even if unnormal) is automatic.
+;**
+;**  INF, NaN are junk, to be determined...
+;**  For now they are set to HUGE
+;**
+;**  Numbers require care since so much can go bad.
+;*************************************************
+ldijnk:
+	setb	rh5,#7	;integer overflow
+ldi0:
+	subl	rr8,rr8
+	ldl	rr10,rr8
+	ret
+
+;*************************************************
+;** The plan is:
+;** 1. Normalize and check for obvious overflow.
+;** 2. Align bin pt to right, perhaps losing bits
+;**    off the left (hence the check in 1).
+;** 3. Round appropriately.
+;** 4. Check for overflow, a painful prospect.
+;** 5. Negate, if required.
+;**
+;** First three done by intadjust
+;*************************************************
+ldino:
+	call	intadjust
+
+;*************************************************
+;** Check for overflow, watching special case of
+;** 08h000000..., which is expedited using rr0.
+;*************************************************
+	subl	rr0,rr0		;rr0 = 08h0000000
+	set	r0,#15
+
+	bitb	rh4,#1	;32 or 64?
+	jr	nz,Flil51
+
+	;test 32 bit case
+	testl	rr8
+	jr	nz,Flil54		;mark overflow
+
+	bit	r10,#15
+	jr	z,Flil60		;can't overflow
+
+	cpl	rr10,rr0
+	jr	ne,Flil54
+	jr	Flil60
+
+
+Flil51:
+	;64 bit case
+	bit	r8,#15
+	jr	z,Flil60		;can't overflow
+
+	cpl	rr8,rr0
+	jr	ne,Flil54
+
+	testl	rr10
+	jr	z,Flil60
+
+Flil54:
+	setb	rh5,#7	;integer overflow
+Flil60:
+
+	;Negate if necessary
+	bitb	rh6,#7
+	ret	z
+
+	res	r0,#15
+	ldl	rr2,rr0
+	subl	rr2,rr10
+	sbc	r1,r9
+	sbc	r0,r8
+	ldl	rr10,rr2
+	ldl	rr8,rr0
+	ret
+
+
+;*************************************************
+;** Special purpose routine to align integer with
+;** binary point to right of 64 bit register,
+;** with prenormalization.
+;*************************************************
+intadjust:
+	call	normordigs	;first norm it
+
+	sub	r7,#0403Eh	;sub biased 63
+	jr	le,Flil92
+
+	;Exp > 63 => integer overflow
+	setb	rh5,#7	;integer overflow
+Flil92:
+	;Align binary pt at right
+	ld	r0,r7
+	neg	r0		;63-Exp
+	resflg	c		;neg sets
+	call	shiftdigs
+
+;*************************************************
+;** Set up an unusual round.  Use separate entry
+;** in routine in order to load EXT format.  This
+;** forces rounding on the right as desired.
+;** There is never a carry-out of the high bit:
+;** if all 64 were set there would be no rounding
+;** bits.
+;*************************************************
+	ldb	rh0,#00Ch	;to get rnd bits
+;#Flil%&@..Segmented Inefficiency..*+'&?@Flil#'[~_)(|#Flil
+	ldb	rl0,r13(#93)
+	andb	rh0,rl0
+	ldb	rl0,#004h	;EXT -> rnd right
+	call	foolsround
+	ret
+
+
+;*************************************************
+;** 28jan82: Add instruction to convert to integer
+;**	with truncation (rather than current
+;**	rounding mode).  Just fudge the current,
+;**	call Fldil, and restore the mode.  Note
+;**	this causes a little extra stack usage
+;**	(one word + one address) than usual.
+;**	Handles Ftiq as well.
+;**	Should allow only EPU->CPU/MEM adrs.
+;*************************************************
+
+	.GLOBAL Ftil 		; PROCEDURE ENTRY
+Ftil:
+
+	ldb	rh0,r13(#93)	;get byte with
+				;rounding mode
+	push	@r15,r0		;save it
+	andb	rh0,#(~0Ch) ;clear bits
+	orb	rh0,#04h	;set to chop
+	ldb	r13(#93),rh0	;replace byte
+
+	call	Fldil
+
+	pop	r0,@r15		;get saved word
+	ldb	r13(#93),rh0	;replace modes
+	ret
+
+;*************************************************
+;** 30mar81: from scratch
+;** 28apr81: must go through tidyflags...
+;** 16mar82: changed for new word format
+;*************************************************
+;** Deliver strange combinations of EPU flags to
+;** the FLAGS byte of the FCW.  Four possible
+;** combos are encoded in reg. no. of 1st word.
+;*************************************************
+__text	.sect
+	.GLOBAL Fldctlb 		; PROCEDURE ENTRY
+Fldctlb:
+	sub	r5,r5		;clear tmp flags
+
+	ldb	rh1,r13(#89)	;~ CPU FLAGS byte
+	ldb	rl1,r13(#91)	;error byte &error flags
+
+	ld	r0,r13(#120)	;1st instr word
+	and	r0,#0F0h	;mask reg. no.
+	jr	nz,Flcb20
+;*************************************************
+;** Set 0:
+;** C <- DZ or O; S <- DZ; V <- O; Z <- U
+;*************************************************
+	bitb	rl1,#3	;division by zero
+	jr	z,Flcb11
+	setb	rl5,#7
+	setb	rl5,#5
+Flcb11:
+	bitb	rl1,#1	;overflow
+	jr	z,Flcb12
+	setb	rl5,#7
+	setb	rl5,#4
+Flcb12:
+	bitb	rl1,#2	;underflow
+	jr	z,Flcb13
+	setb	rl5,#6
+Flcb13:
+	jr	Flcb90
+
+
+Flcb20:
+	bit	r0,#4
+	jr	nz,Flcb30
+	bit	r0,#6
+	jr	nz,Flcb50
+;*************************************************
+;** Set 2:
+;** C <- X; S <- DZ; V <- W; Z <- TorIorDorW
+;*************************************************
+	bitb	rl1,#3	;division by zero
+	jr	z,Flcb21
+	setb	rl5,#5
+	setb	rl5,#6
+Flcb21:
+	bitb	rl1,#7	;integer overflow
+	jr	z,Flcb22
+	setb	rl5,#4
+	setb	rl5,#6
+Flcb22:
+	bitb	rl1,#4	;inexact
+	jr	z,Flcb23
+	setb	rl5,#7
+Flcb23:
+	bitb	rl1,#0	;invalid operation
+	jr	nz,Flcb24
+	bitb	rl1,#6	;trapping nan
+	jr	z,Flcb25
+Flcb24:
+	setb	rl5,#6
+Flcb25:
+	jr	Flcb90
+
+
+Flcb30:
+	bit	r0,#5
+	jr	nz,Flcb40
+;*************************************************
+;** Set 1:
+;** C <- I; S <- T; V <- D; Z <- X
+;*************************************************
+	bitb	rl1,#0	;invalid operation
+	jr	z,Flcb31
+	setb	rl5,#7
+Flcb31:
+	bitb	rl1,#6	;trapping nan
+	jr	z,Flcb32
+	setb	rl5,#5
+Flcb32:
+	bitb	rl1,#3	;division by zero
+	jr	z,Flcb33
+	setb	rl5,#4
+Flcb33:
+	bitb	rl1,#4	;inexact
+	jr	z,Flcb34
+	setb	rl5,#6
+Flcb34:
+	jr	Flcb90
+
+;*************************************************
+;** Set 3:
+;** C <- Fatal; S <- Backup PC; V <- used; Z <- 0
+;*************************************************
+Flcb40:
+	jr	Flcb90
+
+;*************************************************
+;** Set 5:
+;** FCW <- Comparison flags.
+;*************************************************
+Flcb50:
+	ldb	rl5,rh1
+	jr	Flcb90
+
+;************************************************
+;** funnel out to correctly handle flags.
+;************************************************
+Flcb90:
+	subb	rh5,rh5
+	ret
+
+
+;*************************************************
+;** 30mar81: from scratch. Q: Memory operands?
+;** 28apr81: funnel through tidyflags
+;*************************************************
+
+;*************************************************
+;** Transfer to or from an EPU control register.
+;** Decoder has assumed EPU register would be a
+;** data register.
+;*************************************************
+	.GLOBAL Fldctl 		; PROCEDURE ENTRY
+Fldctl:
+;*************************************************
+;** Must get control register number, which un-
+;** unfortunately depends upon addressing mode
+;** EPU <-> CPU or not.  Use r1 for reg #.
+;*************************************************
+	ldl	rr0,r13(#120)
+	bit	r0,#2		;0 --> CPU trans
+	jr	nz,FlC1
+
+	rldb	rh0,rl0		;00F0 -> 0F00
+	ld	r1,r0
+FlC1:
+	and	r1,#00F00h
+	exb	rl1,rh1		;reg #= 000F
+
+	bitb	rh4,#2	;0 --> from EPU
+	jr	nz,FlC50
+
+;*************************************************
+;** From EPU cases:
+;** Six 32-bit registers and two 96 bit ones.
+;*************************************************
+	ldl	rr2,r13(#124)
+
+	or	r1,r1		;is reg #0?
+	jr	nz,FlC10
+
+	ldl	rr6,r13(#80)
+	jr	FlC22
+FlC10:
+	dec	r1,#1
+	jr	nz,FlC11
+;*************************************************
+;** PC of trapping instruction is what?
+;** 	ldl	rr6,r13(#WRKOLDPC)????
+;*************************************************
+	jr	FlC22
+FlC11:
+	dec	r1,#1
+	jr	nz,FlC12
+;*************************************************
+;** PC of stopped instruction is what?
+;**	ldl	rr6,r13(#WRKSTOPPC)????
+;*************************************************
+	jr	FlC22
+FlC12:
+	dec	r1,#1
+	jr	nz,FlC13
+	ldl	rr6,r13(#84)
+	jr	FlC22
+FlC13:
+	dec	r1,#1
+	jr	nz,FlC14
+	ldl	rr6,r13(#88)
+	jr	FlC22
+FlC14:
+	dec	r1,#1
+	jr	nz,FlC15
+	ldl	rr6,r13(#92)
+	jr	FlC22
+FlC15:
+	dec	r1,#1
+	jr	nz,FlC16
+	lda	r7,r13(#108)
+	jr	FlC20
+FlC16:
+	lda	r7,r13(#96)
+FlC20:
+	ldk	r0,#6
+	ldir	@r3,@r7,r0
+	jr	FlC90
+FlC22:
+	ldl	@r3,rr6
+	jr	FlC90
+
+;*************************************************
+;** To EPU cases:
+;** Six 32-bit registers and two 96 bit ones.
+;*************************************************
+FlC50:
+	ldl	rr2,r13(#128)
+	ldl	rr6,@r3
+
+	or	r1,r1
+	jr	nz,FlC60
+	ldl	r13(#80),rr6
+	jr	FlC90
+FlC60:
+	dec	r1,#1
+	jr	nz,FlC61
+;*************************************************
+;** PC of trapping instruction is what?
+;**	ldl	r13(#WRKOLDPC),rr6????????
+;*************************************************
+	jr	FlC90
+FlC61:
+	dec	r1,#1
+	jr	nz,FlC62
+;*************************************************
+;** PC of stopped instruction is what?
+;**	ldl	r13(#WRKSTOPPC),rr6????????
+;*************************************************
+	jr	FlC90
+FlC62:
+	dec	r1,#1
+	jr	nz,FlC63
+	ldl	r13(#84),rr6
+	jr	FlC90
+FlC63:
+	dec	r1,#1
+	jr	nz,FlC64
+	ldl	r13(#88),rr6
+	jr	FlC90
+FlC64:
+	dec	r1,#1
+	jr	nz,FlC65
+	ldl	r13(#92),rr6
+	jr	FlC90
+FlC65:
+	inc	r3,#4	;over first long
+	ldm	r8,@r3,#4
+	dec	r1,#1
+	jr	nz,FlC66
+	lda	r3,r13(#108)
+	jr	FlC70
+FlC66:
+	lda	r3,r13(#96)
+FlC70:
+	ldm	@r3,r6,#6
+FlC90:
+	sub	r5,r5		;no errs
+	ret
+
+;*************************************************
+;** 23feb82: remove Fexm instruction, whose one
+;**	operand should have been via 01h000.
+;** 02mar82: reorder bits in Fsetmode.
+;*************************************************
+;** Set mode bits according to mask.
+;** Second word of instruction is:
+;**	xxxxabcd xxxxefgh
+;** with	ab = round mode mask
+;**	 c = unused
+;**	 d = infinity mode setting
+;**	ef = round mode setting
+;**	 g = unused
+;**	 h = infinity mode setting
+;*************************************************
+__text	.sect
+	.GLOBAL Fsetmode 		; PROCEDURE ENTRY
+Fsetmode
+	ld	r0,r13(#122)
+	and	r0,#00D0Dh	;isolate bits
+	ldb	rh1,r13(#93)	;modes byte
+	comb	rh0		;kill masked bits
+	andb	rh1,rh0
+	orb	rh1,rl0		;new settings
+	ldb	r13(#93),rh1	;modes byte
+	sub	r5,r5		;no errors
+	ret
+
+;*************************************************
+;** Set internal flags according to type.
+;** 03may81: fix to check for NaNs.
+;** 26may81: fix for non/seg index check.
+;** 15feb82: no more unnorm 0
+;** 23feb82: no more Fexm
+;*************************************************
+;** Set and reset sticky flags
+;*************************************************
+	.GLOBAL Fresflg 		; PROCEDURE ENTRY
+Fsetflg:
+Fresflg:
+	ldl	rr0,r13(#120)
+	and	r0,#000f0h
+	ldb	rh0,rl1		;save opcode
+	ldb	rl1,rh1		; added 7/28/81 for new release 
+	srlb	rh1,#4		; from components 
+	and	r1,#00f0fh
+	rrb	rh1,#2
+	rrb	rh1,#2
+	orb	rl1,rh1
+
+	orb	rl0,rl0
+	jr	nz,Frf1
+	lda	r3,r13(#91)	;error byte
+	jr	Frf5
+Frf1:
+	bitb	rl0,#4
+	jr	z,Frf2
+	lda	r3,r13(#89)	;~ CPU FLAGS byte
+	jr	Frf5
+Frf2:
+	lda	r3,r13(#94)	;trap enables)
+Frf5:
+	ldb	rl0,@r3
+	bitb	rh0,#4
+	jr	z,Frf7
+	orb	rl0,rl1
+	jr	Frf9
+Frf7:
+	comb	rl1
+	andb	rl0,rl1
+Frf9:
+	ldb	@r3,rl0
+	sub	r5,r5		;no errors
+	ret

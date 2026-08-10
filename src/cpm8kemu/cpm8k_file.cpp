@@ -9,10 +9,10 @@
 // Default segment for user-mode addresses (TPA merged I/D)
 static constexpr uint8_t TPA_SEG = 0x0A;
 
-CpmFileSystem::CpmFileSystem(SegmentedMemory& mem)
+CpmFileSystem::CpmFileSystem(CpmAddressSpace& mem)
     : m_mem(mem), m_current_drive(0), m_default_drive(0), m_user(0),
       m_dma_addr((uint32_t(TPA_SEG) << 16) | 0x0080),
-      m_caller_seg(TPA_SEG), m_ro_vec(0)
+      m_caller_tag(TPA_SEG), m_ro_vec(0)
 {
     for (int i = 0; i < MAX_OPEN_FILES; i++)
         m_files[i] = {nullptr, 0, 0, false, ""};
@@ -52,12 +52,12 @@ const std::string& CpmFileSystem::get_drive_path(int drive) const
 
 uint8_t CpmFileSystem::mem_read(uint16_t addr)
 {
-    return m_mem.read_byte((uint32_t(m_caller_seg) << 16) | addr);
+    return m_mem.read_byte((uint32_t(m_caller_tag) << 16) | addr);
 }
 
 void CpmFileSystem::mem_write(uint16_t addr, uint8_t val)
 {
-    m_mem.write_byte((uint32_t(m_caller_seg) << 16) | addr, val);
+    m_mem.write_byte((uint32_t(m_caller_tag) << 16) | addr, val);
 }
 
 void CpmFileSystem::mem_read_block(uint16_t addr, uint8_t* buf, int len)
@@ -74,7 +74,7 @@ void CpmFileSystem::mem_write_block(uint16_t addr, const uint8_t* buf, int len)
 
 uint16_t CpmFileSystem::mem_read_word(uint16_t addr)
 {
-    return m_mem.read_word((uint32_t(m_caller_seg) << 16) | addr);
+    return m_mem.read_word((uint32_t(m_caller_tag) << 16) | addr);
 }
 
 // DMA buffer helpers - use the segment embedded in m_dma_addr
@@ -219,7 +219,7 @@ void CpmFileSystem::close_stale(uint16_t fcb_addr)
     for (int i = 0; i < MAX_OPEN_FILES; i++) {
         if (m_files[i].active &&
             m_files[i].fcb_addr == fcb_addr &&
-            m_files[i].fcb_seg == m_caller_seg) {
+            m_files[i].fcb_seg == m_caller_tag) {
             if (m_files[i].fp) fclose(m_files[i].fp);
             m_files[i].active = false;
         }
@@ -263,7 +263,7 @@ OpenFile* CpmFileSystem::ensure_open(uint16_t fcb_addr)
 
     m_files[slot].fp = fp;
     m_files[slot].fcb_addr = fcb_addr;
-    m_files[slot].fcb_seg = m_caller_seg;
+    m_files[slot].fcb_seg = m_caller_tag;
     m_files[slot].active = true;
     m_files[slot].host_path = path;
 
@@ -337,7 +337,7 @@ int CpmFileSystem::file_open(uint16_t fcb_addr)
 
     m_files[slot].fp = fp;
     m_files[slot].fcb_addr = fcb_addr;
-    m_files[slot].fcb_seg = m_caller_seg;
+    m_files[slot].fcb_seg = m_caller_tag;
     m_files[slot].active = true;
     m_files[slot].host_path = path;
 
@@ -540,7 +540,7 @@ int CpmFileSystem::file_make(uint16_t fcb_addr)
 
     m_files[slot].fp = fp;
     m_files[slot].fcb_addr = fcb_addr;
-    m_files[slot].fcb_seg = m_caller_seg;
+    m_files[slot].fcb_seg = m_caller_tag;
     m_files[slot].active = true;
     m_files[slot].host_path = path;
 
@@ -720,13 +720,13 @@ void CpmFileSystem::reset_drives(uint16_t /*mask*/)
 
 void CpmFileSystem::close_all_files()
 {
-    close_user_files(0xFF); // close all segments
+    close_user_files(0xFFFF); // no real machine uses this address tag
 }
 
-void CpmFileSystem::close_user_files(uint8_t sys_seg)
+void CpmFileSystem::close_user_files(uint16_t system_tag)
 {
     for (int i = 0; i < MAX_OPEN_FILES; i++) {
-        if (m_files[i].active && m_files[i].fcb_seg != sys_seg) {
+        if (m_files[i].active && m_files[i].fcb_seg != system_tag) {
             if (m_files[i].fp) {
                 fclose(m_files[i].fp);
                 m_files[i].fp = nullptr;

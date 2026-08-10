@@ -11,6 +11,7 @@
 #include "cpm8k_console.h"
 #include "cpm8k_file.h"
 #include "cpm8k_drives.h"
+#include "cpm8k_z8002.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -24,8 +25,7 @@ static constexpr uint8_t SEG_TPA_SPLIT = 0x08; // TPA separated I/D
 static constexpr uint8_t SEG_TPA  = 0x0A; // TPA merged I/D
 static constexpr uint8_t SEG_SYS  = 0x0B; // System: CCP + BIOS data
 
-// Physical offsets
-static constexpr uint32_t PHYS_TPA = 0x10000;
+// Physical offset used by the Z8001 system-segment MRT builder.
 static constexpr uint32_t PHYS_SYS = 0x30000;
 
 // System stack top (within system segment)
@@ -40,9 +40,6 @@ static constexpr uint16_t PORT_BIOS   = 0xF2;
 static constexpr uint16_t PORT_MAP    = 0xF4;
 static constexpr uint16_t PORT_MEMCPY = 0xF6;
 
-// Global pointers for cross-module access
-SegmentedMemory* g_mem = nullptr;
-CpmFileSystem* g_fs = nullptr;   // host-directory backend (BDOS file ops)
 uint16_t g_mrt_offset = 0;
 
 // Verbose startup diagnostics (off by default; enabled with -v)
@@ -58,12 +55,6 @@ bool g_warm_boot = false;
 // TPA (0x10000), or multi-pass tools (e.g. the C compiler zcc1->zcc2->zcc3)
 // lose the chain command and the pass never loads.
 bool g_last_prog_split = false;
-
-// Set when a program calls P_CHAIN (BDOS 47); consumed by the next warm boot.
-// Only a genuine chain needs the split-data seg-0 mapping preserved (above);
-// a normal program exit must NOT, or the CCP would read stale data in the
-// split data segment as a bogus command.
-bool g_chain_pending = false;
 
 // BDOS state sync: offsets within system segment (from COFF symbol table)
 // Kept for symbol table lookup diagnostics; no longer synced at runtime.
@@ -168,7 +159,7 @@ static uint32_t find_coff_symbol(const uint8_t* buf, long file_size,
 
 // Load a COFF binary into memory at the system segment.
 // Returns the entry point offset, or -1 on error.
-static int load_coff(SegmentedMemory& mem, const char* path, uint32_t phys_base)
+static int load_coff(CpmAddressSpace& mem, const char* path, uint32_t load_base)
 {
     FILE* fp = fopen(path, "rb");
     if (!fp) {
@@ -252,18 +243,18 @@ static int load_coff(SegmentedMemory& mem, const char* path, uint32_t phys_base)
         uint16_t offset = sec.virt_addr & 0xFFFF;
 
         if (sec.size > 0 && sec.data_offset > 0 && sec.data_offset + sec.size <= (uint32_t)file_size) {
-            uint32_t dest = phys_base + offset;
-            if (dest + sec.size <= MEM_SIZE) {
-                memcpy(mem.data() + dest, buf + sec.data_offset, sec.size);
+            uint32_t dest = load_base + offset;
+            if (uint32_t(offset) + sec.size <= 0x10000) {
+                mem.write_block(dest, buf + sec.data_offset, sec.size);
                 if (g_verbose)
                     fprintf(stderr, "  Loaded section %.8s: offset=0x%04X size=0x%X\n",
                             sec.name, offset, sec.size);
             }
         } else if (sec.size > 0 && sec.data_offset == 0) {
             // BSS section - zero fill
-            uint32_t dest = phys_base + offset;
-            if (dest + sec.size <= MEM_SIZE) {
-                memset(mem.data() + dest, 0, sec.size);
+            uint32_t dest = load_base + offset;
+            if (uint32_t(offset) + sec.size <= 0x10000) {
+                mem.clear_block(dest, sec.size);
                 if (g_verbose)
                     fprintf(stderr, "  BSS section %.8s: offset=0x%04X size=0x%X\n",
                             sec.name, offset, sec.size);
@@ -370,6 +361,22 @@ static uint16_t build_mrt(SegmentedMemory& mem, uint16_t offset)
     return offset;
 }
 
+static uint16_t build_z8002_mrt(CpmAddressSpace& mem, uint16_t offset)
+{
+    uint8_t table[34] = {};
+    write_be16(table, 4);
+    write_be32(table + 2, 0x01000000);  // merged I/D
+    write_be32(table + 6, 0x00010000);
+    write_be32(table + 10, 0x01000000); // split I
+    write_be32(table + 14, 0x00010000);
+    write_be32(table + 18, 0x02000000); // split D
+    write_be32(table + 22, 0x00010000);
+    write_be32(table + 26, 0x01000000); // I-space accessed as data
+    write_be32(table + 30, 0x00010000);
+    mem.write_block(offset, table, sizeof(table));
+    return offset;
+}
+
 // --- Basepage setup ---
 // The basepage is at offset 0 of the TPA segment (0x0A).
 // Structure (from startup.8kn):
@@ -390,11 +397,13 @@ static FILE* sc_trace_fp = nullptr;
 class EmuIO : public z8000_io_bus {
     z8002_device& m_cpu;
     SegmentedMemory& m_mem;
+    BdosRouter& m_bdos;
     bool& m_warm_boot;
 
 public:
-    EmuIO(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot)
-        : m_cpu(cpu), m_mem(mem), m_warm_boot(warm_boot) {}
+    EmuIO(z8002_device& cpu, SegmentedMemory& mem, BdosRouter& bdos,
+          bool& warm_boot)
+        : m_cpu(cpu), m_mem(mem), m_bdos(bdos), m_warm_boot(warm_boot) {}
 
     uint8_t read_byte(uint16_t, int) override { return 0xFF; }
     uint16_t read_word(uint16_t, int) override { return 0xFFFF; }
@@ -421,14 +430,14 @@ private:
             fflush(sc_trace_fp);
         }
         uint8_t caller_seg = (m_cpu.get_reg(4) >> 8) & 0x7F;
-        bool claimed = g_fs && bdos_route(m_cpu, *g_fs, caller_seg);
+        bool claimed = m_bdos.route(m_cpu, caller_seg);
         m_cpu.set_reg(0, claimed ? 1 : 0);
     }
 
     // BIOS handler: r2=caller_seg_word, r3=func, rr4=P1, rr6=P2
     void handle_bios() {
         uint8_t caller_seg = (m_cpu.get_reg(2) >> 8) & 0x7F;
-        bios_handler(m_cpu, m_mem, m_warm_boot, caller_seg);
+        bios_handler(m_cpu, m_mem, m_warm_boot, SEG_SYS, caller_seg);
     }
 
     // map_adr: r4=caller_seg_word, r5=space, rr6=addr
@@ -512,6 +521,157 @@ private:
     }
 };
 
+class Z8002IO final : public z8000_io_bus {
+public:
+    Z8002IO(z8002_device& cpu, Z8002Memory& mem, BdosRouter& bdos,
+            bool& warm_boot)
+        : m_cpu(cpu), m_mem(mem), m_bdos(bdos), m_warm_boot(warm_boot) {}
+
+    uint8_t read_byte(uint16_t, int) override { return 0xFF; }
+    uint16_t read_word(uint16_t, int) override { return 0xFFFF; }
+    void write_byte(uint16_t, uint8_t, int) override {}
+    void write_word(uint16_t port, uint16_t, int) override {
+        switch (port) {
+        case PORT_BDOS: handle_bdos(); break;
+        case PORT_BIOS: handle_bios(); break;
+        case PORT_MAP: handle_map(); break;
+        case PORT_MEMCPY: handle_memcpy(); break;
+        }
+    }
+
+private:
+    void handle_bdos() {
+        uint16_t saved_fcw = m_cpu.get_reg(4);
+        bool system = saved_fcw & FCW_S_N;
+        uint16_t caller_tag = system ? 0 : m_mem.user_data_tag();
+        if (!system)
+            m_cpu.set_reg(6, caller_tag);
+        m_cpu.set_reg(0, m_bdos.route(m_cpu, caller_tag) ? 1 : 0);
+    }
+    void handle_bios() {
+        uint16_t saved_fcw = m_cpu.get_reg(2);
+        uint16_t caller_tag = (saved_fcw & FCW_S_N) ? 0 : m_mem.user_data_tag();
+        if (m_cpu.get_reg(3) == 1) {
+            bios_prepare_warm_boot();
+            return;
+        }
+        bios_handler(m_cpu, m_mem, m_warm_boot, 0, caller_tag);
+    }
+    void handle_map() {
+        uint16_t saved_fcw = m_cpu.get_reg(4);
+        int16_t space = int16_t(m_cpu.get_reg(5));
+        uint16_t tag = m_cpu.get_reg(6);
+
+        switch (space) {
+        case -1:
+            m_mem.configure_program(tag, tag);
+            break;
+        case 0:
+            tag = (saved_fcw & FCW_S_N) ? 0 : m_mem.user_data_tag();
+            break;
+        case 1:
+            tag = (saved_fcw & FCW_S_N) ? 0 : m_mem.user_code_tag();
+            break;
+        case 2:
+        case 3:
+            tag = 0;
+            break;
+        case 4:
+            tag = 0x0200;
+            m_mem.set_user_data_tag(tag);
+            break;
+        case 5:
+            tag = m_mem.user_code_tag();
+            break;
+        }
+        m_cpu.set_reg(6, tag);
+    }
+    void handle_memcpy() {
+        uint32_t length = m_cpu.get_reg_long(2);
+        uint32_t dst = m_cpu.get_reg_long(4);
+        uint32_t src = m_cpu.get_reg_long(6);
+        for (uint32_t i = 0; i < length && i < 0x10000; ++i)
+            m_mem.write_byte(dst + i, m_mem.read_byte(src + i));
+        m_cpu.set_reg_long(6, dst + length);
+    }
+
+    z8002_device& m_cpu;
+    Z8002Memory& m_mem;
+    BdosRouter& m_bdos;
+    bool& m_warm_boot;
+};
+
+class Z8002HostedMachine {
+public:
+    Z8002HostedMachine(bool bdos_trace, bool cpu_trace,
+                       bool reg_trace, bool mem_trace)
+        : m_fs(m_mem), m_bdos(m_mem, m_fs, m_loader, 0),
+          m_i_bus(m_mem, 1), m_d_bus(m_mem, 0),
+          m_io(m_cpu, m_mem, m_bdos, g_warm_boot)
+    {
+        m_bdos.set_trace(bdos_trace);
+        bios_set_trace(bdos_trace);
+        m_i_bus.set_trace(mem_trace);
+        m_d_bus.set_trace(mem_trace);
+        m_cpu.set_program_memory(&m_i_bus);
+        m_cpu.set_data_memory(&m_d_bus);
+        m_cpu.set_stack_memory(&m_d_bus);
+        m_cpu.set_io(&m_io);
+        m_cpu.set_trace(cpu_trace);
+        m_cpu.set_reg_trace(reg_trace);
+        m_i_bus.set_fcw_ptr(m_cpu.get_fcw_ptr());
+        m_d_bus.set_fcw_ptr(m_cpu.get_fcw_ptr());
+    }
+
+    int run(const char* sys_file, bool bdos_trace) {
+        for (int d = 0; d < NUM_DRIVES; ++d)
+            if (drive_is_host(d))
+                m_fs.set_drive_path(d, drive_path(d));
+        for (int d = 0; d < NUM_DRIVES; ++d)
+            if (drive_present(d)) { m_fs.set_default_drive(d); break; }
+
+        if (bdos_trace)
+            sc_trace_fp = fopen("sc_trace.log", "w");
+        m_cpu.set_trap_callback([](void* ctx, uint8_t sc, uint32_t pc) {
+            FILE* fp = static_cast<FILE*>(ctx);
+            if (fp) { fprintf(fp, "SC #%d from PC=%04X\n", sc, unsigned(pc)); fflush(fp); }
+            return true;
+        }, sc_trace_fp);
+
+        int entry = load_coff(m_mem, sys_file, 0);
+        if (entry < 0) return 1;
+        uint16_t mrt = (g_ccp_size + 0xFF) & ~0xFF;
+        g_mrt_offset = build_z8002_mrt(m_mem, mrt);
+        bios_init_disks(m_mem, 0, mrt + 256);
+
+        console_init();
+        bool cold = true;
+        do {
+            g_warm_boot = false;
+            uint16_t pc = cold ? g_entry_point : g_warm_entry;
+            m_cpu.init_state(FCW_S_N, pc, 0, 0, 0, 0xFF00);
+            cold = false;
+            while (!m_cpu.is_halted())
+                m_cpu.run(-1);
+            m_bdos.clear_chain_pending();
+        } while (g_warm_boot);
+
+        bios_cleanup_disks();
+        console_restore();
+        return 0;
+    }
+
+private:
+    Z8002Memory m_mem;
+    CpmFileSystem m_fs;
+    Z8002ProgramLoader m_loader;
+    BdosRouter m_bdos;
+    Z8002Bus m_i_bus;
+    Z8002Bus m_d_bus;
+    z8002_device m_cpu;
+    Z8002IO m_io;
+};
+
 static void usage(const char* prog)
 {
     fprintf(stderr, "Usage: %s [options] [image_a [image_b]]\n", prog);
@@ -523,6 +683,7 @@ static void usage(const char* prog)
     fprintf(stderr, "  -r         Enable register trace\n");
     fprintf(stderr, "  -m         Enable memory bus trace\n");
     fprintf(stderr, "  -v         Verbose startup diagnostics\n");
+    fprintf(stderr, "  -M cpu     Hosted CPU: z8001 (default) or z8002\n");
     fprintf(stderr, "  -h         Show this help\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Drives can be mixed, e.g.:\n");
@@ -536,15 +697,17 @@ int main(int argc, char* argv[])
     bool trace = false;
     bool reg_trace = false;
     bool mem_trace = false;
+    const char* machine = "z8001";
 
     int opt;
-    while ((opt = getopt(argc, argv, "btrmvhd:")) != -1) {
+    while ((opt = getopt(argc, argv, "btrmvhd:M:")) != -1) {
         switch (opt) {
         case 'b': bdos_trace = true; break;
         case 't': trace = true; break;
         case 'r': reg_trace = true; break;
         case 'm': mem_trace = true; break;
         case 'v': g_verbose = true; break;
+        case 'M': machine = optarg; break;
         case 'd':
             if (!drive_parse_spec(optarg)) { usage(argv[0]); return 1; }
             break;
@@ -567,10 +730,17 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Auto-detect cpm.sys in default locations
+    if (strcmp(machine, "z8001") != 0 && strcmp(machine, "z8002") != 0) {
+        fprintf(stderr, "Error: unknown hosted CPU '%s'\n", machine);
+        return 1;
+    }
+
+    // Auto-detect the CPU-specific cpm.sys.
     const char* sys_file = nullptr;
     {
-        static const char* defaults[] = {"cpm.sys", "build/bios-emu/cpm.sys", "src/cpm8kemu/bios/cpm.sys", nullptr};
+        static const char* z8001_defaults[] = {"cpm.sys", "build/bios-emu-z8001/cpm.sys", "src/cpm8kemu/bios-z8001/cpm.sys", nullptr};
+        static const char* z8002_defaults[] = {"build/bios-emu-z8002/cpm.sys", nullptr};
+        const char** defaults = strcmp(machine, "z8002") == 0 ? z8002_defaults : z8001_defaults;
         for (const char** p = defaults; *p; p++) {
             struct stat st;
             if (stat(*p, &st) == 0) {
@@ -585,13 +755,18 @@ int main(int argc, char* argv[])
         return 1;
     }
 
+    if (strcmp(machine, "z8002") == 0) {
+        Z8002HostedMachine hosted(bdos_trace, trace, reg_trace, mem_trace);
+        return hosted.run(sys_file, bdos_trace);
+    }
+
     // --- Create system components ---
     SegmentedMemory mem;
-    g_mem = &mem;
 
     // Host-directory backend (services BDOS file ops for HOST_DIR drives)
     CpmFileSystem fs(mem);
-    g_fs = &fs;
+    Z8001ProgramLoader loader;
+    BdosRouter bdos(mem, fs, loader, SEG_SYS);
     for (int d = 0; d < NUM_DRIVES; d++)
         if (drive_is_host(d))
             fs.set_drive_path(d, drive_path(d));
@@ -632,14 +807,14 @@ int main(int argc, char* argv[])
     cpu.set_stack_memory(&d_bus);
     cpu.set_trace(trace);
     cpu.set_reg_trace(reg_trace);
-    bdos_set_trace(bdos_trace);
+    bdos.set_trace(bdos_trace);
     bios_set_trace(bdos_trace);
 
     // Wire FCW pointer so SegBus can distinguish system/normal mode for segment 0
     i_bus.set_fcw_ptr(cpu.get_fcw_ptr());
     d_bus.set_fcw_ptr(cpu.get_fcw_ptr());
 
-    EmuIO io(cpu, mem, g_warm_boot);
+    EmuIO io(cpu, mem, bdos, g_warm_boot);
     cpu.set_io(&io);
 
     // Trap callback: log SC calls and allow all to proceed.
@@ -657,7 +832,7 @@ int main(int argc, char* argv[])
     // --- Load cpm.sys into system segment ---
     if (g_verbose)
         fprintf(stderr, "Loading %s...\n", sys_file);
-    int entry = load_coff(mem, sys_file, PHYS_SYS);
+    int entry = load_coff(mem, sys_file, uint32_t(SEG_SYS) << 16);
     if (entry < 0) {
         fprintf(stderr, "Failed to load %s\n", sys_file);
         return 1;
@@ -673,7 +848,7 @@ int main(int argc, char* argv[])
     // Build BIOS disk data structures (DPH, DPB, buffers) and open images
     // for every IMAGE-backed drive in the drive table.
     uint16_t disk_data_offset = mrt_offset + 256;
-    bios_init_disks(mem, disk_data_offset);
+    bios_init_disks(mem, SEG_SYS, disk_data_offset);
 
     // --- Initialize and run ---
     console_init();
@@ -689,11 +864,11 @@ int main(int argc, char* argv[])
         // CCP still needs to read that program's pending P_CHAIN command out of
         // its data segment (0x20000), so keep the split data map for one warm
         // boot; the next program dispatch (map_adr) reconfigures segment 0.
-        if (!cold_boot && g_last_prog_split && g_chain_pending)
+        if (!cold_boot && g_last_prog_split && bdos.chain_pending())
             mem.set_segment(0x00, 0x10000, 0x20000);
         else
             mem.set_segment_unified(0x00, 0x10000);
-        g_chain_pending = false;
+        bdos.clear_chain_pending();
 
         // Cold boot: C runtime startup (clears BSS, calls main -> ccp)
         // Warm boot: jump directly to ccp() to preserve BSS state
@@ -722,7 +897,8 @@ int main(int argc, char* argv[])
 
         // Refresh __exit handler at TPA offset 0x0002
         static const uint8_t exit_handler[] = {0xBD, 0x50, 0x7F, 0x02, 0x7A, 0x00};
-        memcpy(mem.data() + PHYS_TPA + 0x0002, exit_handler, sizeof(exit_handler));
+        mem.write_block((uint32_t(SEG_TPA) << 16) | 0x0002,
+                        exit_handler, sizeof(exit_handler));
 
         // Run until CPU halts
         while (!cpu.is_halted()) {

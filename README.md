@@ -1,362 +1,326 @@
 # CPM8000 — a CP/M-8000 development environment
 
-A hosted emulator, build system, and toolchain for CP/M-8000 (Digital
-Research's Z8000 CP/M). The Olivetti M20 (Z8001) is the reference board, but
-the BIOS and build system are structured so that bringing up other
-CP/M-8000 boards is a well-defined task, not a rewrite.
+CPM8000 combines the original Digital Research/Zilog CP/M-8000 software with a
+hosted Z8000 emulator, reproducible source reconstruction, the original guest
+toolchain, target-oriented system generation, and logical CP/M media creation.
+The Olivetti M20 is the reference Z8001 target, while the hosted environment
+can execute both Z8001 and Z8002 CP/M.
 
-The system is built from the original Zilog/Digital Research CP/M-8000
-sources, with the goal of rebuilding the BIOS and utilities from source
-using the original DR/Zilog toolchain (C compiler, assembler, linker)
-running inside the emulator.
+## Overview
 
-There are two kinds of BIOS.
+The project keeps four jobs separate:
 
-**Emulator infrastructure** (not a sysgen target):
+1. **Source reconstruction** recreates the distribution tree and applies a
+   small, explicit maintained-source overlay.
+2. **The hosted emulator** runs CP/M-8000 and its original compiler, assembler,
+   linker, and utilities without emulating a complete historical computer.
+3. **System generation (`sysgen`)** compiles a target BIOS and links guest
+   `cpm.sys` and, optionally, `cpmldr.sys` binaries.
+4. **Development-media generation** copies the common source/tool environment
+   plus a target's BIOS source overlay into declared logical CP/M filesystem
+   formats.
 
-- **`src/cpm8kemu/bios/`** — a thin BIOS written for the emulator (bootstrap +
-  trap handler); it dispatches BDOS/BIOS calls to host services rather than
-  emulating hardware. Built by `make bios-emu`; this is the BIOS the emulator
-  runs.
+This separation provides several practical advantages:
 
-**Pluggable BIOSes** under `src/bios/` — each is a package with a `Makefile`
-that `sysgen` builds into a bootable system (see [System generation](#system-generation-sysgen)):
+- Z8001 and Z8002 execution can be compared against identical files and build
+  commands.
+- Original guest tools produce the final Zilog x.out binaries; host conversion
+  is limited to the thin systems required to run the hosted emulator.
+- Distribution files, reconstructed sources, and local fixes have auditable
+  provenance.
+- Compilers, assemblers, linkers, utilities, and examples are common content,
+  rather than being duplicated in every hardware package.
+- A hardware package declares compatible filesystem formats without mixing in
+  boot installation or emulator-container conversion.
+- Directory-backed drives provide a fast edit/build loop, while image-backed
+  drives exercise the native CP/M BDOS and BIOS sector path.
 
-- **`src/bios/m20/`** — the M20 reference BIOS, built with the in-emulator
-  DR/Zilog toolchain (`zcc`, `asz8k`, `ld8k`). An *overlay* package: the BIOS
-  sources come from the stock M20 tree (`src/cpm8k/` — `bios.c` plus `.8kn`
-  assembly, from the distribution disks); the package overlays only the files
-  it changes (nothing, for the stock reference).
+The principal sections are independently usable:
 
-## Emulator
+- [Sources and format conversions](#sources-and-format-conversions)
+- [Hosted emulator: build and execution](#hosted-emulator-build-and-execution)
+- [System generation and development media](#system-generation-and-development-media)
+- [Component notes](#component-notes)
 
-The project includes a hosted emulator that runs CP/M-8000 natively on
-an emulated Z8001 CPU, with BDOS and BIOS services provided by the host.
-Drives are mapped to host directories under `drives/`.
+## Sources and format conversions
 
+This section explains where the source tree comes from and which files are
+converted for host execution.  It does not require familiarity with sysgen or
+media generation.
+
+### Distribution and maintained overlay
+
+The six images under `distribution/CPM_8000_1.1/` are the ground truth for
+`src/cpm8k`.  Regeneration has two explicit stages:
+
+```sh
+make regenerate  # extract the 76 pristine files from the six M20 images
+make overlay     # apply maintained linker and reconstructed FPE sources
+make cpm8k-src   # perform both stages
 ```
-make emu
-build/emu/cpm8k
+
+`make regenerate` produces only distribution files.  `make overlay` adds or
+replaces:
+
+| File | Reason |
+|------|--------|
+| `ld8k.z8k` | From-source linker that supports the required `-r` path |
+| `fpe.8kn` | Maintained software floating-point emulator source |
+| `fpedep.8kn` | Reconstructed Z8001/M20-dependent FPE support |
+| `biosdefs.z8k` | Segmented trap-frame definitions used by FPE |
+| `fpe.sub` | In-guest FPE rebuild recipe |
+
+The overlay is reproducible from `src/linker`, `src/fpe`, and `scripts/fpe.sub`.
+The FPE core will eventually be separated from its Z8001/M20-dependent half so
+that a Z8002 adaptation can be built cleanly.
+
+### Original guest formats and host conversion
+
+CP/M-8000 uses Zilog x.out objects, archives, and executables.  The original
+DR/Zilog tools continue to run inside CP/M and produce that format.  Host tools
+under `src/xoututils` are used only where the hosted emulator needs COFF:
+
+- `xarch` extracts members from an x.out archive.
+- `xout2coff` converts x.out objects to Z8k-COFF.
+- `xoutdump` reports x.out headers, segments, relocations, and symbols.
+
+The hosted systems are assembled and linked on the host as follows:
+
+| Hosted CPU | CCP/BDOS input | Thin hosted BIOS | Host-loaded system |
+|------------|----------------|------------------|--------------------|
+| Z8001 | `src/cpm8k/cpmsys.rel` | `src/cpm8kemu/bios-z8001/` | `build/bios-emu-z8001/cpm.sys` |
+| Z8002 | `src/cpm8k/cpmsys2.rel` | `src/cpm8kemu/bios-z8002/` | `build/bios-emu-z8002/cpm.sys` |
+
+These two `cpm.sys` files are Z8k-COFF executables loaded by the host before
+the CPU starts.  They are not read from a CP/M drive.
+
+### Source layout
+
+```text
+src/cpm8k/             regenerated distribution tree plus maintained overlay
+src/cpm8kemu/          hosted emulator and its two thin BIOSes
+src/asm8k/             assembler source
+src/linker/            linker source and maintained guest binary
+src/fpe/               maintained FPE sources and provenance
+src/xoututils/         host-side x.out inspection/conversion tools
+src/bios/<target>/     target BIOS source overlays and package Makefiles
+src/media/<format>/    logical CP/M filesystem format descriptors
 ```
 
-The emulator uses the Z8001's native trap mechanism for all system calls.
-SC instructions trigger hardware traps that dispatch to BIOS assembly
-handlers, which bridge to C++ via I/O port OUT instructions. This allows
-xfer (context transfer) to switch segments correctly via IRET.
+## Hosted emulator: build and execution
 
-See [PROGRESS.md](PROGRESS.md) for detailed architecture documentation.
+The hosted emulator is a CP/M build and validation environment.  It emulates
+the Z8000 CPU and CP/M trap ABI, while host services provide console, files,
+and disk-image sector I/O.  It is distinct from a complete M20 hardware
+emulator.
 
-## Prerequisites
+### Prerequisites
 
-- **z8k-coff binutils** — GNU Binutils with `--target=z8k-coff`;
-  fork at [tpaxia/binutils-2.46.0](https://github.com/tpaxia/binutils-2.46.0)
-- **C++17 compiler** — for the Z8001 emulator and host program
-- **CMake ≥ 3.16** — cross-platform build of the emulator (`build/emu/cpm8k`)
+- Z8k COFF binutils (`z8k-coff-as`, `z8k-coff-ld`, `z8k-coff-ar` and related
+  tools).  The tested fork is
+  [tpaxia/binutils-2.46.0](https://github.com/tpaxia/binutils-2.46.0).
+- A C++17 compiler.
+- CMake 3.16 or newer.
+- `cpmtools` for logical disk-image generation and inspection.
 
-## Quick start
+Fetch the CPU-emulator submodule after a new checkout:
 
-```
-# first-time checkout: fetch the z8000_emu submodule (the CPU emulator core)
+```sh
 git submodule update --init --recursive
-
-make            # build the emulator (tools, library, emu BIOS, CMake host build)
-make system NAME=m20    # generate a bootable CP/M-8000 system (build/system/m20/)
-
-# run the emulator (at least one drive must be mapped)
-build/emu/cpm8k -d A=dir:drives/A                  # drive A = host directory
-build/emu/cpm8k -d A=img:distribution/CPM_8000_1.1/REL11A.IMG   # drive A = CP/M disk image
 ```
 
-All build artifacts go into `build/`. The emulator itself is built with CMake
-(`cmake -S . -B build/emu`), which `make emu` drives; see [Build pipeline](#build-pipeline).
+### Building
 
-### Drives
-
-Each drive (`A`..`P`) is mapped independently to either a host directory or a
-CP/M-8000 disk image with `-d X=dir:PATH` or `-d X=img:PATH`; the two backends
-can be mixed in one session, e.g.:
-
-```
-build/emu/cpm8k -d A=img:distribution/CPM_8000_1.1/REL11A.IMG -d C=dir:drives/C
+```sh
+make                       # Z8001 hosted BIOS and emulator (default)
+make bios-emu-z8001 emu    # explicit Z8001 build
+make bios-emu-z8002 emu    # also build the Z8002 hosted system
 ```
 
-Drives need not start at `A`. The system boots with the **smallest configured
-drive letter** as the default drive, so `-d B=... -d C=...` comes up at the
-`B>` prompt (not `A>`, which would fail since `A` isn't mapped). Command-line
-order doesn't matter — the lowest letter wins.
+`make bios-emu` remains a compatibility alias for `bios-emu-z8001`.
 
-Host-directory drives are serviced at the BDOS file level against the host
-filesystem; image drives run the real CP/M-8000 BDOS doing sector I/O against
-the image file. See [PROGRESS.md](PROGRESS.md) for the current status of each
-backend and the debug/trace flags (`-b`, `-t`, `-r`, `-m`, `-v`).
+The build first creates `xarch` and `xout2coff`, converts `libcpm.a` and the
+selected CCP/BDOS object, links the matching thin hosted BIOS, and builds
+`build/emu/cpm8k` with CMake.
 
-## Project structure
+### Running Z8001 and Z8002
 
-```
-CPM8000/
-  src/
-    cpm8k/            CP/M-8000 sources from Zilog product distribution
-    cpm8kemu/         hosted emulator (C++17, runs on macOS/Linux)
-      bios/           thin BIOS for the emulator (assembly) -- infrastructure
-    xoututils/        C tools to convert Zilog x.out format to Z8k-COFF
-    linker/           ld8k linker source (+ committed overlay binary)
-    asm8k/            asz8k assembler source (from-source build)
-    fpe/              software floating-point library source (fpe, fpedep)
-    bios/             pluggable BIOSes (each a Makefile package)
-      m20/            M20 reference BIOS (overlay on src/cpm8k)
-  z8000_emu/          Z8001 CPU emulator library
-  build/
-    system/<name>/    generated systems (cpm.sys [, cpmldr.sys]) from sysgen
-    ...               other build output (created by make)
-  Makefile            top-level build pipeline
-  LICENSE             BSD 2-Clause
+At least one drive must be configured:
+
+```sh
+# Hosted Z8001 (the default)
+build/emu/cpm8k -M z8001 -d C=dir:src/cpm8k
+
+# Hosted Z8002 using the same files
+build/emu/cpm8k -M z8002 -d C=dir:src/cpm8k
+
+# Native CP/M filesystem image
+build/emu/cpm8k -M z8002 \
+  -d A=img:distribution/CPM_8000_1.1/REL11A.IMG
 ```
 
-## Build pipeline
+Each drive `A` through `P` can independently use `dir:PATH` or `img:PATH`.
+The smallest configured letter becomes the initial default drive.  A
+directory-backed drive routes file operations to the host; an image-backed
+drive runs the native BDOS and BIOS sector path.
 
-The top-level `make` builds the emulator, in these steps:
+The emulator selects its host-loaded system from `-M`.  A guest `CPM.SYS`
+created by a submit file or visible on a mapped drive is only a guest file and
+does not replace the running hosted system.
 
-1. **Build tools** — compiles `xarch` and `xout2coff` in `src/xoututils/`
-2. **Convert library** — extracts the members from the Zilog x.out `libcpm.a`,
-   converts each to Z8k-COFF, and packs them into a new `build/lib/libcpm.a`
-   with `z8k-coff-ar`
-3. **Convert object** — converts the CCP+BDOS object `cpmsys.o` from x.out to COFF
-4. **Assemble the emulator BIOS** — assembles the thin BIOS in
-   `src/cpm8kemu/bios/` and links `build/bios-emu/cpm.sys`
-5. **Build the emulator** — compiles the host program in `src/cpm8kemu/`
+The Z8001 and Z8002 implementations have been validated by running the same
+ten submit pipelines (`ASZ8K`, `LD8K`, `FPE`, `BIOS`, `CPMSYS`, `LINKSYS`,
+`MAKELDR`, `MKPUTBT`, `WUMP`, and `TICTAC`) and comparing every resulting file
+byte-for-byte.
 
-Bootable CP/M-8000 systems are then generated with `make system` (see below).
+## System generation and development media
 
-### Make targets
+This section describes two related but separate operations.  Sysgen produces
+target-specific guest binaries; media generation packages a development tree
+in a target-declared logical filesystem format.  Neither operation installs a
+boot sector.
 
-| Target | Description |
-|--------|-------------|
-| `make` | Build the emulator (tools + lib + BIOS + host) |
-| `make tools` | Build xoututils only |
-| `make lib` | Convert library and object only |
-| `make bios-emu` | Assemble thin BIOS for emulator |
-| `make emu` | Build the hosted emulator binary |
-| `make system NAME=<n>` | Generate a bootable system for a BIOS (see below) |
-| `make m20-hd` | Build the native M20 development hard disk for MAME drive C: |
-| `make regenerate` / `overlay` / `cpm8k-src` | Regenerate `src/cpm8k` from the images (+ overlay) |
-| `make clean` | Remove `build/` |
+### Sysgen
 
-## Native M20 development hard disk
+The current sysgen implementation generates Z8001 systems.  It uses the
+hosted Z8001 environment as a build computer and runs the original compiler,
+assembler, and linker inside CP/M:
 
-`make m20-hd` creates `build/m20-hd/m20-cpm8000.chd`, a non-bootable native
-M20 hard disk intended to appear as drive `C:` when CP/M-8000 is booted from
-a floppy in MAME.  Attach it with:
-
-```
-m20 m20 -flop1 <boot-disk.img> -hard1 build/m20-hd/m20-cpm8000.chd
-```
-
-The filesystem matches the hard-disk DPB in `src/cpm8k/bios.c` (512 directory
-entries, 4 KiB allocation blocks, and three reserved 4 KiB logical tracks).
-The raw CHD geometry is the stock monitor's 180 cylinders, six heads, 33
-physical 256-byte sectors.  The monitor maps 32 data sectors per head; the
-builder inserts the unused 33rd sector and initializes the bad-block table at
-CHS 0/0/1 with an empty list.  The CHD is deliberately uncompressed because
-MAME must open this writable development disk directly.
-
-The image contains the original CP/M-8000 tools and M20 sources plus the
-assembler and linker sources.  These nine independent recipes are installed
-in the flat CP/M 8.3 namespace and have been tested sequentially against the
-same directory image:
-
-```
-SUBMIT ASZ8K
-SUBMIT LD8K
-SUBMIT BIOS
-SUBMIT CPMSYS
-SUBMIT LINKSYS
-SUBMIT MAKELDR
-SUBMIT MKPUTBT
-SUBMIT WUMP
-SUBMIT TICTAC
+```text
+stock BIOS sources from src/cpm8k + src/bios/<name>/ source overlay
+                               |
+                    in-guest SUBMIT BIOS
+                               v
+                  build/bios/<name>/bios.rel
+                               +
+                  cpmsys.rel and libcpm.a
+                               |
+                  in-guest SUBMIT LINKSYS
+                               v
+                 build/system/<name>/cpm.sys
 ```
 
-The drive-C recipes differ from the distribution's floppy-oriented submits
-only where required: the game sources use current-drive includes, MAKELDR
-does not install a boot record on drive A, and MKPUTBT supplies the missing
-BDOS declarations.  The original submits under `src/cpm8k/` remain unchanged.
+Commands and outputs:
 
-## System generation (sysgen)
+```sh
+make system NAME=m20
+# build/bios/m20/bios.rel
+# build/system/m20/cpm.sys
 
-`sysgen` turns a **BIOS** into a bootable CP/M-8000 system. A BIOS is a
-directory under `src/bios/` containing a `Makefile` (a "BIOS package"); that's
-the whole recognition contract. `sysgen` runs the package's Makefile to build
-the BIOS object, then does the final system link into `build/system/<name>/`.
+make system NAME=m20 LOADER=1
+# also build/system/m20/cpmldr.sys
 
-```
-make emu bios-emu                 # one-time: build the emulator + its cpm.sys
-make system NAME=m20              # -> build/system/m20/cpm.sys
-make system NAME=m20 LOADER=1     # -> also build/system/m20/cpmldr.sys
-make system NAME=foo BIOS=src/bios/foo   # explicit BIOS dir
+make system NAME=foo BIOS=src/bios/foo
 ```
 
-The BIOS is built with the in-emulator DR/Zilog toolchain (`zcc`, `asz8k`,
-`ld8k`), producing x.out objects.
+`NAME` chooses `src/bios/<name>` by default and names both output directories.
+`BIOS=<dir>` selects another package.  `LOADER=1` builds the cold-boot loader,
+but does not run `putboot` or create bootable media.
 
-**The BIOS-package contract** (see `src/bios/m20/Makefile`):
+The BIOS-package build contract is:
 
-- `make -C src/bios/<name> bios.rel BUILDDIR=<dir>` builds the BIOS object.
-- A package is an **overlay**: BIOS sources come from the stock M20 tree
-  (`src/cpm8k`), and the package overlays only the `.c`/`.8kn` files it changes
-  — the same overlay idea as regenerating `src/cpm8k`. The stock M20 reference
-  has an empty overlay.
-
-**To bring up a custom board:** copy `src/bios/m20/` to `src/bios/<board>/`,
-drop in your changed `.c`/`.8kn` (and edit `biosasm.8kn`'s `.input` list if you
-add files), then `make system NAME=<board>`.
-
-The `cpm.sys` final link (`bios.rel` + `cpmsys.rel` + `libcpm.a` via `ld8k`)
-lives in `scripts/link-cpmsys.sh`; the optional loader is built by
-`scripts/build-cpmldr.sh`.
-
-## CP/M-8000 sources
-
-The `src/cpm8k/` directory contains the CP/M-8000 system files from the
-Zilog CP/M-8000 1.1 product distribution disk. 
-
-### Provenance: regenerating `src/cpm8k`
-
-`src/cpm8k/` is not hand-maintained — it is *regenerated* from the pristine
-distribution disk images in two auditable steps, so exactly what deviates from
-the shipped product is explicit:
-
-```
-make regenerate   # step 1: extract the 75 pristine files from the six M20
-                  #         images (distribution/CPM_8000_1.1/*.IMG) with
-                  #         cpmtools + src/diskdefs_m20.mame
-make overlay      # step 2: drop in the one deviation the build needs --
-                  #         the from-source linker src/linker/ld8k.z8k
-make cpm8k-src    # both steps
+```sh
+make -C src/bios/<name> bios.rel BUILDDIR=<directory>
 ```
 
-The **pristine images are the untouched ground truth**; the **overlay is the
-sole deviation**. That deviation is only the linker: the shipped `ld8k` works
-for `-w` final links but fails `-r` relocatable links in the emulator
-("p2 can't open <obj>"), so the overlay supplies the from-source rebuild
-(`src/linker/ld8k.z8k`, a build-once stable binary — rebuild it with
-`scripts/build-ld8k.sh` when `src/linker/ld8k.c` changes). The assembler predef
-`asz8k.pd` is pristine (it matches the image; not a deviation).
+The package is a source overlay: common M20 BIOS sources are staged from
+`src/cpm8k`, then any `.c` or `.8kn` files in the package replace or extend
+them.  The [BIOS package guide](src/bios/README.md) describes the stock `m20`
+package and the `m20-serial` variant used for PTY-driven and headless testing.
+Z8002 sysgen will require `cpmsys2.rel`, a non-segmented BIOS baseline,
+an adapted FPE dependent half, and a corresponding loader; it is not yet
+implemented.
 
-Regenerating drops two files that were never on any distribution disk
-(`bdos.h`, a stray header used only by the unbuilt `putboot.c`; and
-`tmptic.z8k`, a temp build artifact). Building from the regenerated tree
-reproduces `bios.rel`, `cpm.sys`, and `cpmldr.sys` **byte-identical**.
+### Logical development media
 
-### Building the BIOS from source (in the emulator)
+Development media contain the common CP/M-8000 tools, sources, headers,
+libraries, examples, and self-contained submit files.  A target package adds
+only its BIOS source overlay and declares compatible filesystem formats through
+its `media-formats` Make target.
 
-`scripts/build-bios.sh` rebuilds the M20 BIOS from these sources using the
-original DR/Zilog toolchain *running inside the emulator* (`zcc`, `asz8k` →
-`xcon`, `ld8k`, `ar8k`). It stages the sources and toolchain into a fresh
-temporary directory, mounts it as drive `C:`, runs `scripts/bios.sub`, and
-copies the results out:
+List formats for the M20 package:
 
-```
-make emu bios-emu          # build the emulator + its cpm.sys once
-scripts/build-bios.sh      # -> build/bios-src/bios.rel, bios.a
+```sh
+make media-formats NAME=m20
+# m20-floppy-set m20-hd
 ```
 
-The result is byte-identical to the distribution's prebuilt `bios.rel`.
-`scripts/build-cpmsys.sh` goes one step further and links `bios.rel` with
-the CCP+BDOS (`cpmsys.rel`) and `libcpm.a` into `cpm.sys`; its code segment
-is byte-identical to the distribution's `cpm.sys`.
+Build either logical format:
 
-## Linker (ld8k) and the symbol-table fix
-
-The linker source lives in `src/linker/` (`ld8k.c` plus its headers) and is
-rebuilt from source with `scripts/build-ld8k.sh` (a bootstrap build inside
-the emulator). Two points of provenance are worth recording:
-
-- The `ld8k.z8k` shipped in the distribution is **V1.01j**, an *earlier*
-  linker than the one that actually built the distribution. It links, but
-  produces a divergent `cpm.sys` (~49 KB, different segment layout). The
-  linker that reproduces the distribution's code is a later (V1.6-class)
-  linker, which is what `src/linker/ld8k.c` builds — it yields a `cpm.sys`
-  whose code segment and every global/absolute symbol are byte-identical to
-  the distribution.
-
-`ld8k.c` had two bugs in its **symbol-table** (debug) output. Both are in the
-final (`-w`) link path only and are gated on `!saverel`, so relocatable
-(`-r`) links — and therefore `bios.rel` — stay byte-identical to the
-distribution:
-
-1. **Absolute symbols** (segment 255) were relocated through an out-of-bounds
-   `segtab[255]` read (`SEGNO` is 128), adding garbage (`0x358`) to every
-   absolute symbol value.
-2. **Local (debug) symbols** were not relocated like globals across modules,
-   leaving them under-relocated in multi-module links.
-
-The correct model was confirmed against Digital Research's own debugger: the
-CP/M-68K DDT sources (`disas.h`) define the symbol flags `SYEQ` (equated /
-absolute), `SYTX`/`SYDA`/`SYBS` (text/data/bss-relative) and `SYGL` (global).
-The relocation basis is **per-segment and orthogonal to the global/local
-binding** — a text-relative symbol is relocated by the text base whether it
-is global or local, and equated symbols are never relocated. The Z8000 x.out
-format is the same design with a different entry layout (a `seg` byte plus a
-`type` byte instead of one flag word).
-
-Under that model the fixed linker is correct and the **distribution's own
-local symbols are wrong**: e.g. the text-relative local `Fsub10` must carry
-its offset in the text segment (`0x0062`, where the byte-identical code
-places it), which the fixed linker emits, but the distribution stored
-`0x0b9c`. These are debug-only symbols — the relocation table is empty in a
-fully-linked `cpm.sys` and the loader never reads the symbol table — so the
-difference never affected the running system, only symbolic debugging.
-
-## Floating-point library (fpe)
-
-The M20 has no Z8070 arithmetic coprocessor, so floating point is emulated in
-software. `fpe` is the trap handler for the Z8000 EPA extended (floating-point)
-instructions: when one traps, `fpe` decodes the two-word EPA/fpe encoding and
-emulates the operation. `fpedep.z8k` is its system-dependent half (memory
-map/transfer helpers for the segmented trap frame).
-
-The sources live in `src/fpe/`; `scripts/build-fpe.sh` assembles them
-(`asz8k` → `xcon`):
-
-```
-scripts/build-fpe.sh       # -> build/fpe/fpe.o, fpedep.o
+```sh
+make media NAME=m20 FORMAT=m20-floppy-set
+make media NAME=m20 FORMAT=m20-hd
 ```
 
-Both halves are assembled against the segmented **`biosdefs.z8k`** — the M20 is
-a Z8001, so its saved trap frame carries a PC-segment word (`scseg`). The
-Z8002 variant `biosdefs2.z8k` omits `scseg` (non-segmented) and renames a few
-frame slots; assembling against it gives the wrong offsets and a divergent
-symbol table.
+| Format | Output | Description |
+|--------|--------|-------------|
+| `m20-floppy-set` | `build/media/m20/m20-floppy-set/development-01.img` … `development-06.img` | Common tree split deterministically across six 280 KiB M20 CP/M filesystems |
+| `m20-hd` | `build/media/m20/m20-hd/development.img` | One 8,839,168-byte logical M20 CP/M hard-disk filesystem |
 
-`fpedep.z8k`'s function bodies were transcribed from the distribution
-`fpedep.o` disassembly — a hand-optimized variant using `ldk`/`xor`/`clrb`
-(not the longer `ld`/`ldl`/`ldb #0` in the `newos`/`bios` copies) — so its
-object content is **byte-identical** to `src/cpm8k/fpedep.o`. `fpe.o` is
-byte-identical except the `epuwp` work area, which is declared with `.block`
-(reserved, uninitialized): the distribution binary carries leftover buffer
-garbage there, this build emits zeros, and no relocations touch that region —
-so the two are functionally identical.
+Every image is created at its full declared logical geometry and checked with
+`fsck.cpm`.  These are CP/M filesystem images only:
 
-## xoututils
+- no generated `cpm.sys` or `cpmldr.sys` is installed;
+- no boot sector is written because that requires the target's `putboot`
+  procedure;
+- no CHD or other emulator-specific container is generated.
 
-The `src/xoututils/` directory contains C tools for working with the Zilog
-x.out object file format used by CP/M-8000:
+The reusable format contract is documented in
+[`src/media/README.md`](src/media/README.md).  A target advertises compatible
+formats in its package Makefile; a format descriptor supplies the cpmtools
+diskdef, single-versus-split layout, output stem, and exact image size.
 
-- **xarch** — extract members from an x.out archive (`.a`)
-- **xout2coff** — convert an x.out object file to Z8k-COFF format
-- **xoutdump** — dump x.out file headers, segments, relocations, and symbols
+## Component notes
 
-These are a C port of the Go tools by 4sun5bu
-([xoututils](https://github.com/4sun5bu/xoututils), MIT license).
+This section records details useful when changing individual components.  The
+earlier sections are sufficient for ordinary source, emulator, sysgen, and
+media use.
+
+### Linker
+
+The distribution `ld8k.z8k` is V1.01j and does not reproduce the linker used
+to build the shipped system.  `src/linker/ld8k.c` builds a later V1.6-class
+linker and fixes two symbol-table-only problems: absolute symbols were
+relocated through an invalid segment-table entry, and local debug symbols were
+not relocated by their segment bases.  These corrections do not alter fully
+linked runtime code.
+
+Rebuild the maintained guest linker with:
+
+```sh
+scripts/build-ld8k.sh
+```
+
+### Floating-point emulator
+
+`src/fpe/fpe.z8k` implements the EPA extended-instruction trap emulator.
+`fpedep.z8k` supplies system-dependent memory and trap-frame operations.  The
+current dependent half reproduces the segmented Z8001/M20 object; it is not yet
+the Z8002 adaptation.
+
+```sh
+scripts/build-fpe.sh
+```
+
+The reconstructed `fpedep.o` content matches the distribution object.  The
+rebuilt `fpe.o` differs only in an uninitialized `.block` work area that the
+emulator initializes at runtime.  See [`src/fpe/README.md`](src/fpe/README.md)
+for provenance and variant analysis.
+
+### Further implementation notes
+
+[`PROGRESS.md`](PROGRESS.md) contains lower-level emulator, trap, loader, and
+filesystem implementation notes.
 
 ## Acknowledgments
 
-- **4sun5bu** — [xoututils](https://github.com/4sun5bu/xoututils) (MIT license)
-- **Digital Research** — CP/M-8000 1.1, licensed by Lineo, Inc.
-  (see [The Unofficial CP/M Web Site](http://www.cpm.z80.de/))
+- 4sun5bu — [xoututils](https://github.com/4sun5bu/xoututils) (MIT license)
+- Digital Research — CP/M-8000 1.1, licensed by Lineo, Inc. (see
+  [The Unofficial CP/M Web Site](http://www.cpm.z80.de/))
 
 ## License
 
 BSD 2-Clause — see [LICENSE](LICENSE).
 
-CP/M-8000 system files (`cpmsys.rel`, `libcpm.a`) are licensed by Lineo, Inc.
+CP/M-8000 system files (`cpmsys.rel`, `cpmsys2.rel`, and `libcpm.a`) are
+licensed by Lineo, Inc.

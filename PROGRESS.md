@@ -283,7 +283,7 @@ The emulator is fully host-endian independent:
 - `include/z8000_intf.h` - Abstract memory/IO bus interfaces
 - `src/z8000.cpp` - CPU emulation core, Interrupt() handler, run loop
 
-#### src/cpm8kemu/bios/ (Thin BIOS for Emulator)
+#### src/cpm8kemu/bios-z8001/ and bios-z8002/ (Thin Hosted BIOSes)
 - `biosdef.s` - Shared definitions (SC numbers, frame offsets, I/O ports)
 - `biosboot.s` - Bootstrap: clear BSS, set stack/PSAP, init traps, jump to CCP
 - `biostrap.s` - Trap handlers: _trap, bdossc, biossc, memsc, xfersc, trapinit
@@ -535,42 +535,45 @@ ld8k caveat above). There is no committed build target for the loader yet.
 
 ## Build System & System Generation
 
-The repo is a CP/M-8000 dev environment: build the emulator, regenerate the
-source tree, and generate bootable systems from pluggable BIOSes.
+The repo is a CP/M-8000 development environment: regenerate the source tree,
+run the original tools in hosted Z8001 or Z8002 CP/M, generate target guest
+binaries, and package common development content into logical CP/M media.
 
 ### Emulator build
 `make` (default target `emu`) builds the host tools (`src/xoututils`), converts
 the CCP+BDOS and library from x.out to Z8k-COFF (`build/lib`), assembles the
-emulator's thin BIOS (`src/cpm8kemu/bios`, moved there as emulator
-infrastructure -- it is not a pluggable BIOS), and links the emulator host
-program. The thin BIOS dispatches BDOS/BIOS to host services; it has no loader.
+matching thin hosted BIOS (`src/cpm8kemu/bios-z8001` or `bios-z8002`), and
+links the emulator host program. These BIOSes are emulator infrastructure, not
+sysgen target packages.
 
 ### Regenerating src/cpm8k (regenerate + overlay)
 `src/cpm8k/` is a *generated artifact*, not hand-maintained, so its deviation
 from the shipped product is explicit:
-- `make regenerate` -- extract the 75 pristine files from the six Olivetti-M20
+- `make regenerate` -- extract the 76 pristine files from the six Olivetti-M20
   distribution images (`distribution/CPM_8000_1.1/*.IMG`) with cpmtools +
   `src/diskdefs_m20.mame`.
-- `make overlay` -- drop in the one deviation the build needs: the from-source
-  linker `src/linker/ld8k.z8k` (the shipped ld8k fails its `-r` pass-1->pass-2
-  handoff in the emulator; the rebuilt one fixes it, committed once as a stable
-  binary). `make cpm8k-src` runs both.
+- `make overlay` -- install the maintained linker and reconstructed FPE source
+  set (`fpe.8kn`, `fpedep.8kn`, `biosdefs.z8k`, and `fpe.sub`).
+  `make cpm8k-src` runs both steps.
 - Verified: `bios.rel`, `cpm.sys`, `cpmldr.sys` all rebuild byte-identical from
   the regenerated tree; `asz8k.pd` is pristine (matches the image).
 
 ### System generation (sysgen)
-`make system NAME=<name> [LOADER=1] [BIOS=<dir>]` generates a bootable system.
+`make system NAME=<name> [LOADER=1] [BIOS=<dir>]` generates Z8001 guest system
+binaries. It does not install a boot sector or create bootable media.
 A **BIOS is a directory under `src/bios/` with a `Makefile`** (the recognition
 contract). `sysgen` runs `make -C src/bios/<name> bios.rel` to build the BIOS
 object, then does the final system link (`scripts/link-cpmsys.sh`:
 `bios.rel` + `cpmsys.rel` + `libcpm.a` -> `cpm.sys` via `ld8k`), plus the
-optional loader (`scripts/build-cpmldr.sh`), into `build/system/<name>/`.
+  optional loader (`scripts/build-cpmldr.sh`), into `build/system/<name>/`.
 - BIOS packages are **overlays** on the stock M20 tree (`src/cpm8k`):
   `src/bios/m20` has an empty overlay (pure stock); a custom board copies the
   dir and drops in only its changed `.c`/`.8kn`. The three staging scripts
   (`build-bios`/`cpmsys`/`cpmldr`) share the `BIOS_OVERLAY` model.
-- Verified: `make system NAME=m20 LOADER=1` produces `cpm.sys`/`cpmldr.sys`
-  byte-identical to the direct builders; `cpm.sys` boots in the emulator.
+- `make media NAME=<name> FORMAT=<format>` separately packages the common
+  development tree plus the package's BIOS source overlay into logical CP/M
+  filesystems. M20 packages declare `m20-floppy-set` and `m20-hd`. This path
+  does not run `putboot`, install generated system binaries, or create CHDs.
 
 ### Native lane parked on a branch
 A second bring-up path -- a real-hardware BIOS built with the host `z8k-coff`

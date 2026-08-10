@@ -4,12 +4,6 @@
 #include <cstdio>
 #include <cstring>
 
-// System segment
-static constexpr uint8_t SYS_SEG = 0x0B;
-
-// Physical offset of system segment
-static constexpr uint32_t PHYS_SYS = 0x30000;
-
 // BIOS function numbers (from bios.s biostbl)
 enum BiosFunc {
     BIOS_INIT    = 0,
@@ -204,14 +198,15 @@ static void write_dpb(uint8_t* p, const DpbParams& d)
 //  12: csvp (2)     - checksum vector pointer
 //  14: alvp (2)     - allocation vector pointer
 
-uint16_t bios_init_disks(SegmentedMemory& mem, uint16_t base_offset)
+uint16_t bios_init_disks(CpmAddressSpace& mem, uint16_t system_tag,
+                         uint16_t base_offset)
 {
-    uint8_t* sysbase = mem.data() + PHYS_SYS;
+    uint32_t sysbase = uint32_t(system_tag) << 16;
     uint16_t off = (base_offset + 1) & ~1;   // keep word alignment
 
     // --- Shared directory buffer ---
     uint16_t dirbuf_off = off; off += 128;
-    memset(sysbase + dirbuf_off, 0, 128);
+    mem.clear_block(sysbase + dirbuf_off, 128);
 
     // --- Per present drive: DPB + DPH + CSV + ALV ---
     // Build these for every PRESENT drive -- host directory or image. The
@@ -246,17 +241,20 @@ uint16_t bios_init_disks(SegmentedMemory& mem, uint16_t base_offset)
         uint16_t csv_off = off; off += csv_len;
         uint16_t alv_off = off; off += alv_len;
 
-        write_dpb(sysbase + dpb_off, geo);
-        memset(sysbase + dph_off, 0, 16);
-        memset(sysbase + csv_off, 0, csv_len);
-        memset(sysbase + alv_off, 0, alv_len);
+        uint8_t dpb[18];
+        write_dpb(dpb, geo);
+        mem.write_block(sysbase + dpb_off, dpb, sizeof(dpb));
+        mem.clear_block(sysbase + dph_off, 16);
+        mem.clear_block(sysbase + csv_off, csv_len);
+        mem.clear_block(sysbase + alv_off, alv_len);
 
-        uint8_t* dph = sysbase + dph_off;
+        uint8_t dph[16] = {};
         write_be16(dph + 0,  0);  // xltp = NULL (no sector translation)
         write_be16(dph + 8,  dirbuf_off);
         write_be16(dph + 10, dpb_off);
         write_be16(dph + 12, csv_off);
         write_be16(dph + 14, alv_off);
+        mem.write_block(sysbase + dph_off, dph, sizeof(dph));
 
         s_disk_fp[d] = fp;          // null for host-dir drives
         s_dph_offset[d] = dph_off;
@@ -303,9 +301,17 @@ void bios_cleanup_disks()
     }
 }
 
+void bios_prepare_warm_boot()
+{
+    for (int i = 0; i < NUM_DRIVES; ++i)
+        if (s_disk_fp[i])
+            fflush(s_disk_fp[i]);
+}
+
 // --- BIOS function handler ---
 
-bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint8_t caller_seg)
+bool bios_handler(z8002_device& cpu, CpmAddressSpace& mem, bool& warm_boot,
+                  uint16_t system_tag, uint16_t caller_tag)
 {
     // BIOS calling convention (from biostrap.s biossc):
     // r3 = function number
@@ -317,7 +323,7 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
     uint16_t p1_lo = cpu.get_reg(5);
     uint16_t p2_hi = cpu.get_reg(6);
     uint16_t p2_lo = cpu.get_reg(7);
-    (void)caller_seg;
+    (void)caller_tag;
 
     if (s_bios_trace && s_trace_fp && func != BIOS_CONST) {
         fprintf(s_trace_fp, "BIOS %2d %-8s P1=%04X:%04X P2=%04X:%04X\n",
@@ -333,33 +339,33 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
             uint16_t cur_r15 = cpu.get_reg(15);
             uint16_t orig_r15 = cur_r15 + 44;
             // Read frame fields for context
-            uint32_t frame_phys = 0x30000 + cur_r15 + 4; // +4 for calr ret addr
-            uint16_t scfcw = (mem.data()[frame_phys + 34] << 8) | mem.data()[frame_phys + 35];
-            uint16_t scseg = (mem.data()[frame_phys + 36] << 8) | mem.data()[frame_phys + 37];
-            uint16_t scpc = (mem.data()[frame_phys + 38] << 8) | mem.data()[frame_phys + 39];
+            uint32_t frame_addr = (uint32_t(system_tag) << 16) | (cur_r15 + 4);
+            uint16_t scfcw = mem.read_word(frame_addr + 34);
+            uint16_t scseg = mem.read_word(frame_addr + 36);
+            uint16_t scpc = mem.read_word(frame_addr + 38);
             fprintf(s_trace_fp, "  scfcw=%04X caller=%04X:%04X orig_R15=%04X\n",
                     scfcw, scseg, scpc, orig_r15);
             // Dump stack at original R15 (the _bios stack frame before SC #3)
-            uint32_t stk_phys = 0x30000 + orig_r15;
+            uint32_t stk_addr = (uint32_t(system_tag) << 16) | orig_r15;
             fprintf(s_trace_fp, "  STK @%04X:", orig_r15);
             for (int i = 0; i < 24; i++)
-                fprintf(s_trace_fp, " %02X", mem.data()[stk_phys + i]);
+                fprintf(s_trace_fp, " %02X", mem.read_byte(stk_addr + i));
             fprintf(s_trace_fp, "\n");
             // Dump caller code around the return address (0x1480)
             static int code_dump_count = 0;
             if (code_dump_count < 2) {
                 code_dump_count++;
-                uint16_t ret_addr = (mem.data()[stk_phys] << 8) | mem.data()[stk_phys + 1];
-                uint32_t caller_phys = 0x30000 + ret_addr;
+                uint16_t ret_addr = mem.read_word(stk_addr);
+                uint32_t caller_addr = (uint32_t(system_tag) << 16) | ret_addr;
                 // Dump 32 bytes before return address (the call site and arg setup)
                 fprintf(s_trace_fp, "  CALLER @%04X:", ret_addr - 32);
                 for (int i = -32; i < 8; i++)
-                    fprintf(s_trace_fp, " %02X", mem.data()[caller_phys + i]);
+                    fprintf(s_trace_fp, " %02X", mem.read_byte(caller_addr + i));
                 fprintf(s_trace_fp, "\n");
                 // Also dump _bios function code
                 fprintf(s_trace_fp, "  _bios @02D4:");
                 for (int i = 0; i < 24; i++)
-                    fprintf(s_trace_fp, " %02X", mem.data()[0x30000 + 0x02D4 + i]);
+                    fprintf(s_trace_fp, " %02X", mem.read_byte((uint32_t(system_tag) << 16) + 0x02D4 + i));
                 fprintf(s_trace_fp, "\n");
             }
         }
@@ -450,9 +456,7 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
             cpu.set_reg_long(6, 1);
             return true;
         }
-        // Copy to Z8001 memory at DMA address
-        uint32_t phys = mem.translate(s_dma_addr, 0);
-        memcpy(mem.data() + phys, buf, 128);
+        mem.write_block(s_dma_addr, buf, sizeof(buf));
         cpu.set_reg_long(6, 0);
         return true;
     }
@@ -464,9 +468,7 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
         }
         long offset = (long)s_track * 4096 + (long)s_sector * 128;
         uint8_t buf[128];
-        // Read from Z8001 memory at DMA address
-        uint32_t phys = mem.translate(s_dma_addr, 0);
-        memcpy(buf, mem.data() + phys, 128);
+        mem.read_block(s_dma_addr, buf, sizeof(buf));
         if (fseek(s_disk_fp[s_drive], offset, SEEK_SET) != 0 ||
             fwrite(buf, 1, 128, s_disk_fp[s_drive]) != 128) {
             cpu.set_reg_long(6, 1);
@@ -486,9 +488,7 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
         if (xlt == 0) {
             cpu.set_reg_long(6, (uint32_t)sector);
         } else {
-            // Read translated sector from XLT table in Z8001 memory
-            uint32_t phys = mem.translate(xlt + sector, 0);
-            cpu.set_reg_long(6, (uint32_t)mem.data()[phys]);
+            cpu.set_reg_long(6, (uint32_t)mem.read_byte(xlt + sector));
         }
         return true;
     }
@@ -509,7 +509,7 @@ bool bios_handler(z8002_device& cpu, SegmentedMemory& mem, bool& warm_boot, uint
 
     case BIOS_GMRTA: {
         // Return memory region table address as long (seg:offset)
-        uint32_t addr = (uint32_t(SYS_SEG) << 16) | g_mrt_offset;
+        uint32_t addr = (uint32_t(system_tag) << 16) | g_mrt_offset;
         cpu.set_reg_long(6, addr);
         return true;
     }

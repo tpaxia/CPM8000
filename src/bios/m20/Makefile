@@ -12,12 +12,17 @@
 ROOT     := $(abspath $(CURDIR)/../../..)
 BUILDDIR ?= $(ROOT)/build/bios/m20
 
-.PHONY: bios.rel clean
+MEDIA_FORMATS := m20-floppy-set m20-hd
+
+.PHONY: bios.rel media-formats clean
 
 # Build the BIOS object with the guest toolchain, overlaying this package's
 # sources (if any) onto the stock M20 sources.
 bios.rel:
 	BIOS_OVERLAY=$(CURDIR) $(ROOT)/scripts/build-bios.sh $(BUILDDIR)
+
+media-formats:
+	@echo $(MEDIA_FORMATS)
 
 clean:
 	$(RM) -rf $(BUILDDIR)

@@ -6,7 +6,7 @@
 #   3. Convert the CCP+BDOS object (cpmsys.o) from x.out to COFF
 #   4. Assemble the emulator's thin BIOS and build the emulator host program
 #
-# Generate a bootable system:  make system NAME=<name>   (see scripts/sysgen.sh)
+# Generate guest system binaries: make system NAME=<name> (see scripts/sysgen.sh)
 #
 # The CP/M-8000 sources in src/cpm8k/ are checked into the repository.
 
@@ -17,7 +17,7 @@ BUILDDIR = build
 XARCH = $(BUILDDIR)/tools/xarch
 XOUT2COFF = $(BUILDDIR)/tools/xout2coff
 LIBDIR = $(BUILDDIR)/lib
-.PHONY: all clean tools lib bios-emu emu regenerate overlay cpm8k-src system m20-hd
+.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats
 
 all: emu
 
@@ -32,14 +32,19 @@ overlay:
 
 cpm8k-src: regenerate overlay
 
-# --- System generation: build a bootable system for a chosen BIOS ---
+# --- System generation: build guest binaries for a chosen BIOS ---
 # make system NAME=<name> [BIOS=<dir>] [LOADER=1]   (default M20)
 system:
 	scripts/sysgen.sh $(if $(BIOS),--bios $(BIOS),) $(if $(LOADER),--loader,) $(if $(NAME),$(NAME),m20)
 
-# Native M20 development hard disk for use as MAME drive C:.
-m20-hd:
-	scripts/build-m20-hd.sh
+# Logical CP/M development media.  The target package declares the formats it
+# supports; no boot sectors or emulator-specific containers are generated.
+media:
+	@test -n "$(FORMAT)" || { echo "usage: make media NAME=<name> FORMAT=<format> [BIOS=<dir>]" >&2; exit 2; }
+	scripts/build-media.sh $(if $(NAME),$(NAME),m20) $(FORMAT) $(if $(BIOS),$(BIOS),src/bios/$(if $(NAME),$(NAME),m20))
+
+media-formats:
+	@$(MAKE) -s -C $(if $(BIOS),$(BIOS),src/bios/$(if $(NAME),$(NAME),m20)) media-formats
 
 # --- Build host tools ---
 tools: $(XARCH) $(XOUT2COFF)
@@ -66,17 +71,27 @@ $(LIBDIR)/cpmsys.o: $(XOUT2COFF)
 	cp $(SRCDIR)/cpmsys.rel $(LIBDIR)/cpmsys.rel
 	cd $(LIBDIR) && $(abspath $(XOUT2COFF)) cpmsys.rel
 
+$(LIBDIR)/cpmsys2.o: $(XOUT2COFF)
+	mkdir -p $(LIBDIR)
+	cp $(SRCDIR)/cpmsys2.rel $(LIBDIR)/cpmsys2.rel
+	cd $(LIBDIR) && $(abspath $(XOUT2COFF)) cpmsys2.rel
+
 $(LIBDIR)/libcpm.a: $(LIBDIR)/.done
 	$(AR) rcs $@ $(LIBDIR)/*.o
 
 lib: $(LIBDIR)/libcpm.a $(LIBDIR)/cpmsys.o
 
-# --- Build thin BIOS for emulator ---
-bios-emu: lib
-	$(MAKE) -C src/cpm8kemu/bios BUILDDIR=$(abspath $(BUILDDIR)/bios-emu) LIBDIR=$(abspath $(LIBDIR))
+# --- Build thin BIOSes for emulator ---
+bios-emu: bios-emu-z8001
+
+bios-emu-z8001: lib
+	$(MAKE) -C src/cpm8kemu/bios-z8001 BUILDDIR=$(abspath $(BUILDDIR)/bios-emu-z8001) LIBDIR=$(abspath $(LIBDIR))
+
+bios-emu-z8002: lib $(LIBDIR)/cpmsys2.o
+	$(MAKE) -C src/cpm8kemu/bios-z8002 BUILDDIR=$(abspath $(BUILDDIR)/bios-emu-z8002) LIBDIR=$(abspath $(LIBDIR))
 
 # --- Build emulator host program (cross-platform CMake build) ---
-emu: bios-emu
+emu: bios-emu-z8001
 	cmake -S . -B $(BUILDDIR)/emu -DCMAKE_BUILD_TYPE=Release
 	cmake --build $(BUILDDIR)/emu
 
