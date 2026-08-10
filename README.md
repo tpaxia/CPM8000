@@ -6,6 +6,25 @@ toolchain, target-oriented system generation, and logical CP/M media creation.
 The Olivetti M20 is the reference Z8001 target, while the hosted environment
 can execute both Z8001 and Z8002 CP/M.
 
+## Quick start
+
+After installing the [build prerequisites](#prerequisites), clone the repository
+with its Z8000 CPU-emulator submodule, build the default hosted Z8001 system,
+and run it with the complete CP/M-8000 development tree mounted as drive C:
+
+```sh
+git clone --recurse-submodules https://github.com/tpaxia/CPM8000.git
+cd CPM8000
+make
+build/emu/cpm8k -M z8001 \
+  -d C=dir:src/cpm8k
+```
+
+The emulator starts at the CP/M `C>` prompt with the original tools, sources,
+headers, libraries, examples, and `.sub` build recipes available.  Type `exit`
+to leave it.  Z8001 is the default hosted CPU, but `-M z8001` is shown
+explicitly here.
+
 ## Overview
 
 The project keeps four jobs separate:
