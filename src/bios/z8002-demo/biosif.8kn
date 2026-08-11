@@ -1,0 +1,145 @@
+;************ biosif.z8k **************************
+;*
+;* Assembly language interface for P-CP/M (tm) BIOS
+;*       ----- System-Independent -----
+;*
+;* 821013 S. Savitzky (Zilog) -- split into modules
+;* 820913 S. Savitzky (Zilog) -- created.
+;*
+
+;  01/12/83	Adapted for a Z8002 (DMH)
+
+__text:	.sect
+
+;****************************************************
+;*
+;* NOTE	
+;*	The C portion of the BIOS is non-segmented.
+;*
+;*	This assembly-language module is assembled
+;*	non-segmented, and serves as the interface.
+;*
+;*	Segmented operations are well-isolated, and
+;*	are either the same as their non-segmented
+;*	counterparts, or constructed using macros.
+;*	The resulting code looks a little odd.
+;*
+;****************************************************
+
+
+
+;****************************************************
+;*
+;* Externals 
+;*
+;****************************************************
+
+	.global _biosinit	;C portion init
+	.global _flush		;Flush buffers
+
+	.global ccp		;Command Processor
+
+	.global	_trapinit	;trap startup
+
+	.global _psap, _sysseg, _sysstk
+
+;****************************************************
+;*
+;* Global declarations
+;*
+;****************************************************
+
+	.global	bios		; initialization
+	.global _wboot		; warm boot
+	.global _input		; input a byte
+	.global _output		; output a byte
+
+;****************************************************
+;*
+;* Bios Initialization and Entry Point
+;*
+;*	This is where control comes after boot.
+;*	Control is transferred to the CCP.
+;*
+;*	We get here from bootstrap with:
+;*		valid stack pointer
+;*		valid PSA in RAM
+;*
+;****************************************************
+
+bios:
+
+; Get system (PC) segment into r4
+
+	DI	VI,NVI
+
+; get PSAP into r3.
+
+	ldctl	r3, PSAPOFF
+	sub	r4,r4			; this will be _sysseg, for consistency
+	ld	_psap, r3
+	ld	_sysseg, r4
+	ld	r14,_sysseg
+	ld	_sysstk, r15
+
+; set up system stack so that a return will warm boot
+
+	push	@r15,#_wboot
+
+
+; set up traps, then enable interrupts
+
+	call	_trapinit
+	EI	VI,NVI
+
+; set up C part of Bios
+
+	call	_biosinit
+
+; Turn control over to command processor
+
+	jp	ccp
+
+;*****************************************************
+;*
+;* Warm Boot
+;*
+;*	flush buffers and initialize Bios
+;*	then transfer to CCP
+;*
+;*****************************************************
+
+_wboot:
+	call	_flush
+	call	_biosinit
+	ld	r15,_sysstk
+	jp	ccp
+
+
+;****************************************************
+;*
+;* I/O port operations
+;*
+;* int = input(port: int)
+;* output (port, data: int)
+;*
+;****************************************************
+
+_input:
+	ld	r2,ARG1(r15)
+	subl	rr6,rr6
+	inb	rl7,@r2
+	ldb	rl6,rl7
+	ret
+
+
+_output:
+	ld	r2,ARG1(r15)
+	ld	r3,ARG2(r15)
+	outb	@r2,rl3
+	ret
+
+
+;*****************************************************
+;*****************************************************
+

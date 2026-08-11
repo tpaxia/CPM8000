@@ -1,0 +1,351 @@
+;************ biostrap.z8k **************************
+;*
+;*	Trap handlers for P-CP/M (tm) BIOS
+;*
+;* 821013 S. Savitzky (Zilog) -- created
+;* 821123 D. Dunlop (Zilog)   -- added Olivetti M20-
+;*	  specific code to invalidate track buffer
+;*	  contents when disk drive motor stops
+;*	  (fixes directory-overwrite on disk change)
+;*
+
+;  01/12/83	Adapted for Z8002 (DMH)
+__text:	.sect
+
+;****************************************************
+;*
+;* NOTE	
+;*	Trap and interrupt handlers are started up
+;*	in segmented mode on the Z8001.
+;*
+;****************************************************
+
+
+
+;****************************************************
+;*
+;* Externals 
+;*
+;****************************************************
+
+	.global	__bios		;C portion of BIOS
+	.global	memsc		;memory-management SC
+
+	.global _sysseg, _usrseg, _usrdseg, _sysstk, _psap
+
+
+;****************************************************
+;*
+;* Global declarations
+;*
+;****************************************************
+
+	.global	_trapinit
+	.global	_trapvec
+	.global _trap
+
+	.global xfersc
+
+;****************************************************
+;*
+;* Trap vector table
+;*
+;*	entries 0..31 are misc. system traps
+;*	entries 32..47 are system calls 0..15
+;*
+;****************************************************
+
+__bss:	.sect
+
+_trapvec:
+	.block NTRAPS*4			; leave trap space same as for Z8001,
+					; for compatibility
+
+;****************************************************
+;*
+;* System Call and General Trap Handler And Dispatch
+;*
+;*	It is assumed that the system runs 
+;*	non-segmented on a segmented CPU.
+;*
+;*	_trap is jumped to with the
+;*	following information on the stack:
+;*
+;*		trap type: WORD
+;*		reason:	   WORD
+;*		fcw:	   WORD
+;*		pc:	   WORD
+;*
+;*	The trap handler is called as a subroutine,
+;*	with all registers saved on the stack. This
+;*	allows the trap handler to be in another
+;*	segment (with some care).  This is useful 
+;*	mainly to the debugger.
+;*
+;*	All registers except rr0 are also passed
+;*	intact to the handler.
+;*
+;****************************************************
+
+__text:	.sect
+
+sc_trap:			; system call trap server
+
+	push	@r15,@r15	; duplicate type as reason
+
+
+_trap:				; general trap server
+
+	sub	r15,#FRAMESZ-8	; push caller state
+	ldm	@r15,r0,#15
+	ldctl	r1,NSP
+	ex	r1,nr15(r15)
+
+				; trap# now in r1
+	cpb	rh1,#7Fh	; system call?
+	jr  ne	trap_disp	; no
+				; yes: map it
+	clrb	rh1
+	add	r1,#SC0TRAP
+
+;=== need range check ===
+
+trap_disp:			; dispatch
+
+;****************************************************************************
+;* BDOS_SC caller-bank injection -- REQUIRED by the Z8002-demo banking MMU
+;* -------------------------------------------------------------------------
+;* WHY THIS EXISTS (read before touching the MMU or this BIOS):
+;*
+;* The OS (CCP/BDOS/BIOS) runs in SYSTEM mode, physical bank 0.  A transient
+;* program runs in NORMAL mode in its own TPA bank (NBANK_I/NBANK_D, e.g.
+;* bank 1 -- see biosmem.8kn / MEMORY_MODEL.md).  When the transient calls the
+;* BDOS it passes an FCB/DMA pointer as a BARE 16-BIT OFFSET (rr6 = 0:offset):
+;* a non-segmented program cannot know its own bank, because NBANK_* are
+;* privileged special-I/O registers it may not read.
+;*
+;* But the BDOS, running in bank 0, must reach that FCB/DMA which lives in the
+;* TPA's bank.  It does so with mem_bcp (a cross-bank copy through the C3
+;* aperture) using a {bank, offset} pointer -- traphnd forms it as `ldl rr2,rr6`.
+;* So the high word of rr6 must carry the caller's bank.
+;*
+;* The stock cpmsys2.rel was built for a FLAT model (OS and TPA share one 64K
+;* bank) so its traphnd leaves the tag as 0 -- the equivalent `ld r2,_usrseg`
+;* is COMMENTED OUT in bdosif2.z8k.  Rather than rebuild the BDOS, the BIOS --
+;* which alone knows the caller's mode (saved FCW) and the TPA bank (_usrseg) --
+;* injects the bank here: for a BDOS system call (sc #2) from a NORMAL-mode
+;* caller, set rr6's high word to _usrseg (the transient's TPA bank).
+;*
+;* ONLY normal callers are tagged; a SYSTEM-mode caller is LEFT UNTOUCHED, and
+;* that is essential.  The CCP passes bank-0 pointers, and -- critically -- the
+;* program LOADER runs inside the BDOS in system mode and passes REAL bank-1 TPA
+;* pointers (it points the DMA into the TPA with `set DMA`, fn 26, then reads a
+;* record straight into the transient's bank).  Forcing r6=0 there would send
+;* that read into bank 0 and the TPA would never be loaded.  So: system callers
+;* carry their own bank (via their own map_adr); only the non-segmented
+;* transient, which cannot, gets the injection.
+;*
+;* IF YOU CHANGE THE MMU so the TPA shares bank 0 (flat), _usrseg is 0 and this
+;* becomes a no-op automatically.  IF YOU REBUILD THE BDOS with the _usrseg tag
+;* enabled, remove this block to avoid tagging twice.
+;****************************************************************************
+	cp	r1,#(BDOS_SC+SC0TRAP)	; a BDOS system call (sc #2)?
+	jr  ne	no_binject
+	ld	r0,scfcw(r15)		; caller's saved FCW
+	bit	r0,#14			; caller in system mode?
+	jr  nz	no_binject		;   yes -> LEAVE r6 (see note below)
+	ld	r6,_usrdseg		;   no -> inject the caller's DATA bank
+					;   (FCB/DMA are data; == _usrseg unless split-I/D)
+no_binject:
+
+	sll	r1,#2
+	ldl	rr0,_trapvec(r1)
+	testl	rr0
+	jr  z	_trap_ret	; zero -- no action
+	call	@r1		; go execute the trap
+
+_trap_ret:			;return from trap or interrupt
+
+	ld	r1,nr15(r15)	; pop state
+	ldctl	NSP,r1
+	ldm	r0,@r15,#15
+	add	r15,#FRAMESZ-6	; re-adjust stack
+	iret			; return from interrupt
+
+
+
+;****************************************************
+;*
+;* Assorted Trap Handlers
+;*
+;****************************************************
+
+epu_trap:
+	push	@r15,#EPUTRAP
+	jr	_trap
+
+pi_trap:
+	push	@r15,#PITRAP
+	jr	_trap
+
+seg_trap:
+	push	@r15,#SEGTRAP
+	jr	_trap
+
+nmi_trap:
+	push	@r15,#NMITRAP
+	jr	_trap
+
+
+
+;****************************************************
+;*
+;* Bios system call handler
+;*
+;****************************************************
+
+
+biossc:				; call bios
+				; r3 = operation code
+				; rr4= P1
+				; rr6= P2
+
+				; set up C stack frame
+;===
+	pushl	@r15,rr6
+	pushl	@r15,rr4
+	push	@r15,r3
+
+				; call C program
+	call	__bios
+
+				; clean stack & return
+	add	r15,#10
+	ldl	cr6+co(r15),rr6	; with long in rr6
+	ret
+
+
+;****************************************************
+;*
+;* Context Switch System Call
+;*
+;*	xfer(context)
+;*	long context;
+;*
+;* context is the physical (long) address of:
+;*	r0
+;*	...
+;*	r13
+;*	r14 (normal r14)
+;*	r15 (normal r15)
+;*	ignored word  (trap reason)
+;*	FCW (had better specify normal mode)
+;*	PC offset
+;*
+;* The system stack pointer is not affected.
+;*
+;* Control never returns to the caller.
+;*
+;****************************************************
+
+xfersc:			;enter here from system call
+
+; build frame on system stack
+
+; when called from system call, the frame replaces
+; the caller's context, which will never be resumed.
+
+; z8002 banking: the context we IRET into runs in NORMAL mode, whose memory is
+; NBANK_I (instruction fetches) and NBANK_D (data).  Point NBANK_I at the code
+; bank (_usrseg) and NBANK_D at the data bank (_usrdseg).  For a merged program
+; these are equal; for a split-I/D program they differ (mmu.v routes I vs D by
+; the id_instr line), giving the program a full 64K of code AND 64K of data.
+; (r0 is scratch here: the IRET restores r0..r13 from the context frame.)
+	ld	r0,_usrseg	; code (I) bank in high byte
+	soutb	0FFE0h,rh0	; NBANK_I = code bank
+	ld	r0,_usrdseg	; data (D) bank (== code bank unless split-I/D)
+	soutb	0FFE1h,rh0	; NBANK_D = data bank
+
+	inc	r15,#co		; discard return addr
+	ld	r5,r15		; move context
+	ld	r2,#FRAMESZ/2
+	ldir	@r5,@r7,r2
+	dec	r5,#2		;point back to PC
+	ldi	@r5,@r7,r2	;transfer PC
+	jr	_trap_ret	;restore context
+
+
+
+;****************************************************
+;*
+;* _trapinit -- initialize trap system
+;*
+;****************************************************
+
+
+;*
+;* PSA (Program Status Area) structure
+;*
+ps	.equ	4	; size of a program status entry
+			; --- non-segmented ---
+
+psa_epu	.equ	1*ps	; EPU trap offset
+psa_prv	.equ	2*ps	; priviledged instruction trap
+psa_sc	.equ	3*ps	; system call trap
+psa_seg	.equ	4*ps	; segmentation trap
+psa_nmi	.equ	5*ps	; non-maskable interrupt
+psa_nvi	.equ	6*ps	; non-vectored interrupt
+psa_vi	.equ	7*ps	; vectored interrupt
+psa_vec	.equ	psa_vi+(ps/2)	; vectors
+
+
+_trapinit:
+
+; initialize trap table
+
+	lda	r2,_trapvec
+	ld	r0,#NTRAPS
+	subl	rr4,rr4
+clrtraps:
+	ldl	@r2,rr4
+	inc	r2,#4
+	djnz	r0,clrtraps
+
+	ld	r2,_sysseg
+	lda	r3,biossc
+	ldl	_trapvec+(BIOS_SC+SC0TRAP)*4,rr2
+	lda	r3,memsc
+	ldl	_trapvec+(MEM_SC+SC0TRAP)*4,rr2
+
+
+; initialize some PSA entries.
+;	r0	PSA entry: FCW	(ints ENABLED)
+;	r1	PSA entry: PC
+;	r5	-> PSA slot
+
+	ld	r5,_psap
+	ld	r0,#0D800h
+
+	add	r5,#ps		; skip reserved to EPU trap
+	ld	r1,#epu_trap
+	ldm	@r5,r0,#2
+
+	add	r5,#ps		; Priviledged Inst
+	ld	r1,#pi_trap
+	ldm	@r5,r0,#2
+
+	add	r5,#ps		; System Call
+	ld	r1,#sc_trap
+	ldm	@r5,r0,#2
+
+	add	r5,#ps		; segmentation
+	ld	r1,#seg_trap
+	ldm	@r5,r0,#2
+
+	add	r5,#ps		; Non-Maskable Int.
+	ld	r1,#nmi_trap
+	ldm	@r5,r0,#2
+	ret
+
+;****************************************************
+;****************************************************

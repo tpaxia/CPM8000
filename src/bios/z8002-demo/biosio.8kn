@@ -1,0 +1,198 @@
+;************ biosio.8kn -- Z8002-demo FPGA machine ****************
+;*
+;*	Low-level I/O for the CP/M-8000(tm) BIOS on the Z8002 machine.
+;*	Replaces the Olivetti-M20 PROM interface (disk_io/crt_put/cold_boot)
+;*	with this board's hardware: KFMMC IDE disk, Z80-SIO console.
+;*	Non-segmented (Z8002).  Ported from z8002-bios/ide.s + sio.s.
+;*
+;*	See ../../../../Z8000_FPGA/z8000_examples/Z8002-demo/HARDWARE.md
+;*
+
+__text:	.sect
+
+	.global	_disk_io
+	.global	_crt_put
+	.global	_cold_boot
+
+;****************************************************
+;* I/O ports (HARDWARE.md)
+;****************************************************
+
+SIODB	.equ	0FF1Bh		; SIO Ch.B data
+SIOCB	.equ	0FF1Fh		; SIO Ch.B control/status (RR0)
+TXRDY	.equ	04h		; RR0 bit2 = Tx buffer empty
+
+IDEDATA	.equ	0020h		; data (16-bit word)
+IDESECC	.equ	0025h		; sector count
+IDESECN	.equ	0027h		; LBA[7:0]
+IDECYLL	.equ	0029h		; LBA[15:8]
+IDECYLH	.equ	002Bh		; LBA[23:16]
+IDEDEVH	.equ	002Dh		; LBA[27:24] | mode
+IDESTAT	.equ	002Fh		; status (r) / command (w)
+BSYBIT	.equ	80h
+DRQBIT	.equ	08h
+ERRBIT	.equ	01h
+CMDRD	.equ	20h		; READ SECTORS
+CMDWR	.equ	30h		; WRITE SECTORS
+
+DSKREAD	.equ	0		; disk_io read command (bios.c)
+
+;****************************************************
+;*
+;* err = disk_io(drv, cmd, count, blk, addr)
+;*	drv   = ARG1 (ignored -- single SD/IDE unit)
+;*	cmd   = ARG2 (0 = read, 1 = write)
+;*	count = ARG3 (number of 512-byte sectors)
+;*	blk   = ARG4 (starting LBA, 16-bit; LBA[27:16]=0)
+;*	addr  = ARG5 (buffer, 16-bit pointer)
+;*	returns 0 in r7 on success, 1 on error.
+;*
+;****************************************************
+
+_disk_io:
+	dec	r15,#14			; save r8..r14
+	ldm	@r15,r8,#7
+
+	ld	r8,  14+ARG2(r15)	; r8  = cmd (0=read, 1=write)
+	ld	r9,  14+ARG3(r15)	; r9  = sector count
+	ld	r10, 14+ARG4(r15)	; r10 = LBA[15:0]
+	ld	r11, 14+ARG5(r15)	; r11 = buffer pointer
+
+dio_loop:
+	call	chkbsy			; wait !BSY & !DRQ
+	ld	r2, #IDESECC		; sector count = 1
+	ldb	rl0, #1
+	outb	@r2, rl0
+	ld	r0, r10			; LBA into byte-addressable r0
+	ld	r2, #IDESECN		; LBA[7:0]
+	outb	@r2, rl0
+	ld	r2, #IDECYLL		; LBA[15:8]
+	outb	@r2, rh0
+	ld	r2, #IDECYLH		; LBA[23:16] = 0
+	clrb	rl0
+	outb	@r2, rl0
+	ld	r2, #IDEDEVH		; LBA mode, master, LBA[27:24]=0
+	ldb	rl0, #40h
+	outb	@r2, rl0
+
+	ld	r2, #IDESTAT		; issue command
+	cp	r8, #DSKREAD
+	jr	nz, dio_wr
+	ldb	rl0, #CMDRD
+	outb	@r2, rl0
+	call	rdsec
+	jr	dio_next
+dio_wr:
+	ldb	rl0, #CMDWR
+	outb	@r2, rl0
+	call	wrsec
+dio_next:
+	jr	c, dio_err		; carry set by rd/wrsec on ERR
+	inc	r10,#1			; next LBA
+	add	r11,#512		; advance buffer
+	dec	r9,#1
+	jr	nz, dio_loop
+
+	clr	r7			; success
+	ldm	r8,@r15,#7
+	inc	r15,#14
+	ret
+dio_err:
+	ld	r7,#1
+	ldm	r8,@r15,#7
+	inc	r15,#14
+	ret
+
+;****************************************************
+;* chkbsy - wait until !BSY and !DRQ
+;****************************************************
+chkbsy:
+	ld	r2, #IDESTAT
+	inb	rl0, @r2
+	andb	rl0, #88h		; mask BSY | DRQ
+	jr	nz, chkbsy
+	ret
+
+;****************************************************
+;* rdsec - read 256 words (one sector) into @r11
+;*	waits !BSY & DRQ; CF set on ERR.  advances nothing (caller does).
+;****************************************************
+rdsec:
+	ld	r2, #IDESTAT
+rd_wait:
+	inb	rl0, @r2
+	bitb	rl0, #0			; ERR ?
+	jr	nz, rd_err
+	andb	rl0, #88h		; mask BSY | DRQ
+	cpb	rl0, #DRQBIT		; want !BSY & DRQ
+	jr	nz, rd_wait
+	ld	r1, #256
+	ld	r3, #IDEDATA
+	ld	r4, r11			; scratch buffer ptr
+rd_loop:
+	in	r0, @r3
+	exb	rl0, rh0		; match on-disk byte order
+	ld	@r4, r0
+	inc	r4,#2
+	dec	r1,#1
+	jr	nz, rd_loop
+	resflg	c
+	ret
+rd_err:
+	setflg	c
+	ret
+
+;****************************************************
+;* wrsec - write 256 words (one sector) from @r11
+;****************************************************
+wrsec:
+	ld	r2, #IDESTAT
+wr_wait:
+	inb	rl0, @r2
+	bitb	rl0, #0			; ERR ?
+	jr	nz, wr_err
+	andb	rl0, #88h		; mask BSY | DRQ
+	cpb	rl0, #DRQBIT		; want !BSY & DRQ
+	jr	nz, wr_wait
+	ld	r1, #256
+	ld	r3, #IDEDATA
+	ld	r4, r11
+wr_loop:
+	ld	r0, @r4
+	exb	rl0, rh0
+	out	@r3, r0
+	inc	r4,#2
+	dec	r1,#1
+	jr	nz, wr_loop
+	resflg	c
+	ret
+wr_err:
+	setflg	c
+	ret
+
+;****************************************************
+;*
+;* crt_put(char) -- console output byte (SIO Ch.B), waits for Tx empty.
+;*
+;****************************************************
+_crt_put:
+	ld	r1, ARG1(r15)		; char in rl1
+cp_wait:
+	ld	r2, #SIOCB
+	inb	rl0, @r2
+	bitb	rl0, #2			; RR0 bit2 = Tx empty
+	jr	z, cp_wait
+	ld	r2, #SIODB
+	outb	@r2, rl1
+	ret
+
+;****************************************************
+;*
+;* cold_boot() -- machine cold start.  The monitor has already loaded the
+;* system into bank 0 and set the MMU; here we just make sure the IDE is
+;* ready.  (Serial is initialised by serinit() in bios.c.)
+;*
+;****************************************************
+_cold_boot:
+	call	chkbsy
+	ret

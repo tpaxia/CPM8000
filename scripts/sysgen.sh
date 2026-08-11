@@ -48,8 +48,17 @@ make -C "$BIOSDIR" bios.rel BUILDDIR="$OBJ" >/dev/null
 [ -s "$OBJ/bios.rel" ] || { echo "error: $BIOSDIR did not produce bios.rel" >&2; exit 1; }
 
 echo "-- linking cpm.sys --"
-./scripts/link-cpmsys.sh "$OBJ/bios.rel" "$OUT" >/dev/null
+CPMSYS=cpmsys.rel
+EMU_MODEL=z8001
+[ -f "$BIOSDIR/CPMSYS" ] && CPMSYS=$(sed -n '1p' "$BIOSDIR/CPMSYS")
+[ -f "$BIOSDIR/EMU_MODEL" ] && EMU_MODEL=$(sed -n '1p' "$BIOSDIR/EMU_MODEL")
+./scripts/link-cpmsys.sh "$OBJ/bios.rel" "$OUT" "$CPMSYS" "$EMU_MODEL" >/dev/null
 [ -s "$OUT/cpm.sys" ] || { echo "error: cpm.sys was not produced" >&2; exit 1; }
+
+if make -s -C "$BIOSDIR" -n system-artifacts >/dev/null 2>&1; then
+	echo "-- building target system artifacts --"
+	make -s -C "$BIOSDIR" system-artifacts SYSTEMDIR="$OUT"
+fi
 
 if [ "$LOADER" -eq 1 ]; then
 	echo "-- building loader cpmldr.sys --"

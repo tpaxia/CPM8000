@@ -1,0 +1,87 @@
+;********** wboot.s -- Olivetti bootstrap writer*****
+;*
+;* 821013 S. Savitzky (Zilog) -- adapt for nonseg.
+;* 820930 S. Savitzky (Zilog) -- created
+;*
+;****************************************************
+
+;  01/12/83	Adapted for the Kontron ECB/16 Z8002 (DMH)
+;  01/16/83	Added relocation code to relocate the
+;		Z8002 CP/M from 8000h to 0000h (DMH).
+__text:	.sect
+
+;****************************************************
+;*
+;* NOTE -- THIS CODE IS HIGHLY SYSTEM-DEPENDENT
+;*
+;*	This module contains the code that receives
+;*	control after being booted.
+;*
+;*	The main function is to make sure that the 
+;*	system, whose entry point is called "bios",
+;*	is passed a valid stack and PSA pointer.
+;*
+;****************************************************
+
+
+
+;****************************************************
+;*
+;* Externals
+;*
+;****************************************************
+
+	.global	bios
+	.global _wboot
+	.global _psap
+
+;****************************************************
+;*
+;* Constants
+;*
+;****************************************************
+
+
+SYSTEM	.equ	00000000h	; system address (loaded here by the monitor)
+;* Bank-0 layout (system mode).  The OS occupies chunks 0-2 (code ends ~0x9252);
+;* the PSA and the system stack live in chunk 2's free tail, which leaves
+;* CHUNK 3 (0xC000-0xFFFF) entirely FREE as the copy/map aperture window that
+;* mem_bcp uses to reach the TPA bank (SAP1 / C3=B -- see biosmem.8kn).
+;*   0x0000-0x9252  code+data+bss      (chunks 0,1,2)
+;*   0x9300         PSA (trap vectors, ~48 bytes)
+;*   ..0xBF00       system stack (grows down, ~11K -- deep BDOS chain needs <1K)
+;*   0xC000-0xFFFF  aperture window (chunk 3), NOT used by the OS
+SYSSTK	.equ	0BF00h		; system stack top (chunk 2; keeps chunk 3 free)
+SYSPSA	.equ	09300h		; system PSA (above the OS image)
+
+
+
+;****************************************************
+;*
+;* Entry Points and post-boot Initialization
+;*
+;****************************************************
+
+
+;* transfer vector 
+
+	jr	entry			; offset 0: cold boot
+	jr	wboot			; offset 2: warm boot
+	jr	entry			; offset 4
+
+;* post-boot init
+;* The monitor has already loaded the system at 0 and programmed the MMU
+;* (OS home = bank 0).  We just set up the stack + PSA and enter the BIOS.
+;* (No 0x8000->0 relocation -- we run where we were loaded.)
+
+entry:	DI	VI,NVI
+	ld	r15, #SYSSTK	; init stack pointer
+	ld	r3, #SYSPSA	; PSA location
+	ldctl	psap, r3	; set the CPU PSAP register
+	ld	_psap, r3	; and the BIOS _psap variable (trapinit fills here)
+	ld	r3,#bios
+	jp	@r3		; enter the BIOS cold boot
+
+wboot:	ld	r3,#_wboot
+	jp	@r3
+

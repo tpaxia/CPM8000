@@ -15,12 +15,16 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 EMU=build/emu/cpm8k
+EMU_MODEL=${EMU_MODEL:-z8001}
 SRC=${SRC:-src/cpm8k}
 SUB=scripts/bios.sub
 OUT=${1:-build/bios-src}
 
 [ -x "$EMU" ] || { echo "error: $EMU not built -- run 'make emu' first" >&2; exit 1; }
-[ -f build/bios-emu-z8001/cpm.sys ] || { echo "error: build/bios-emu-z8001/cpm.sys missing -- run 'make bios-emu-z8001' first" >&2; exit 1; }
+[ -f "build/bios-emu-$EMU_MODEL/cpm.sys" ] || {
+	echo "error: build/bios-emu-$EMU_MODEL/cpm.sys missing -- run 'make bios-emu-$EMU_MODEL' first" >&2
+	exit 1
+}
 
 # Sources bios.sub needs. biosasm.8kn pulls in the other .8kn files via
 # `.input`, so they must be present too. fpe.o/fpedep.o are used prebuilt here;
@@ -57,7 +61,7 @@ cp "$SUB" "$DRIVE/BIOS.SUB"
 
 echo "building (drive C: -> $DRIVE) ..."
 echo "----------------------------------------------------------------------"
-printf 'SUBMIT BIOS\n' | "$EMU" -d C=dir:"$DRIVE" 2>/dev/null \
+printf 'SUBMIT BIOS\n' | "$EMU" -M "$EMU_MODEL" -d C=dir:"$DRIVE" 2>/dev/null \
 	| LC_ALL=C tr -cd '\11\12\40-\176' | grep -v '^[[:space:]]*$' || true
 echo "----------------------------------------------------------------------"
 

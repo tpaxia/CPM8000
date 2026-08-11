@@ -1,0 +1,10 @@
+diskdef z8002demohd
+  seclen 512
+  tracks 2032
+  sectrk 8
+  blocksize 4096
+  maxdir 512
+  skew 0
+  boottrk 0
+  os 2.2
+end

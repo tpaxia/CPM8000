@@ -1,0 +1,19 @@
+;******** biosasm.8kn -- Z8002-demo FPGA machine *****************
+;* Top assembly module: combines the non-segmented Z8002 BIOS modules
+;* (grafted from the newos P-CP/M Kontron/Z8002 port) plus this board's
+;* I/O module.  The .bss globals (_sysseg/_usrseg/_sysstk/_psap) and the
+;* trap vector are defined inside the grafted modules, so this file only
+;* pulls them together.
+;*******************************************************************
+
+__text:	.sect
+
+LOADER	.equ	0
+
+	.input "biosdefs.8kn"
+	.input "biosboot.8kn"
+	.input "biosif.8kn"
+	.input "biosio.8kn"
+	.input "biosmem.8kn"
+	.input "biostrap.8kn"
+	.input "syscall.8kn"

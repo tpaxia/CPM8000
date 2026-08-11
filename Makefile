@@ -17,7 +17,7 @@ BUILDDIR = build
 XARCH = $(BUILDDIR)/tools/xarch
 XOUT2COFF = $(BUILDDIR)/tools/xout2coff
 LIBDIR = $(BUILDDIR)/lib
-.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats
+.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats z8002-demo-image
 
 all: emu
 
@@ -45,6 +45,9 @@ media:
 
 media-formats:
 	@$(MAKE) -s -C $(if $(BIOS),$(BIOS),src/bios/$(if $(NAME),$(NAME),m20)) media-formats
+
+z8002-demo-image:
+	scripts/build-z8002-demo-hd.sh
 
 # --- Build host tools ---
 tools: $(XARCH) $(XOUT2COFF)

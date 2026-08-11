@@ -1,0 +1,316 @@
+;************ biosmem2.z8k **************************
+;*
+;*	Memory Management for P-CP/M (tm) BIOS
+;*	for Olivetti M20 (Z8001) system.
+;*
+;* 821013 S. Savitzky (Zilog) -- split modules
+;* 820913 S. Savitzky (Zilog) -- created.
+;*
+
+;  01/12/83	Adapted for Z8002 (DMH, FMZ)
+
+__text:	.sect
+
+;****************************************************
+;*
+;*	This module copies data from one memory space
+;*	to another.  The machine-dependent parts of
+;*	the mapping are well isolated.
+;*
+;*	Segmented operations are well-isolated, and
+;*	are either the same as their non-segmented
+;*	counterparts, or constructed using macros.
+;*
+;****************************************************
+
+
+;****************************************************
+;*
+;* Global declarations
+;*
+;****************************************************
+
+	.global _sysseg, _usrseg, _usrdseg, _sysstk, _psap
+	.global _mem_mov, _map_wdw, _unwdw
+	.global memsc
+
+	.global _blkmov
+
+
+;****************************************************
+;*
+;* Externals
+;*
+;****************************************************
+
+	.global xfersc
+	.global _mem_bcp
+
+
+;****************************************************
+;*
+;* System/User Memory Access 
+;*
+;* _mem_cpy( source, dest, length)
+;*	long source, dest, length;
+;* _map_adr( addr,  space)	  -> paddr
+;*	long addr; int space;
+;*
+;* _map_adr( addr,  -1)		  -> addr
+;*	sets user seg# from addr
+;*
+;* _map_adr( addr,  -2)
+;*	control transfer to context at addr.
+;*
+;* system call:  mem_cpy
+;*	rr6:	source
+;*	rr4:	dest
+;*	rr2:	length (0 < length <= 64K)
+;*	 returns
+;*	registers unchanged
+;*
+;* system call:  map_adr
+;*	rr6:	logical addr
+;*	r5:	space code
+;*	r4:	ignored
+;*	rr2:	0
+;*	 returns
+;*	rr6:	physical addr
+;*
+;* space codes:
+;*	0:	caller data
+;*	1:	caller program
+;*	2:	system data
+;*	3:	system program
+;*	4:	TPA data
+;*	5:	TPA program
+;*
+;*	The following does not apply in Z8002 case
+;*
+;*	x+256	x=1, 3, 5 : segmented I-space addr.
+;*			    instead of data access
+;*
+;*	FFFF:	set user segment
+;*
+;****************************************************
+
+
+memsc:		;memory manager system call
+				; CALLED FROM SC
+				; IN SEGMENTED MODE
+				; rr6: source
+				; rr4: dest   / space
+				; rr2: length / 0
+	testl	rr2
+	jr z	mem_map
+
+
+mem_copy:			; copy data.
+				; rr6: source
+				; rr4: dest
+				; rr2: length
+	push	@r15,r3		; push length as a short!
+	pushl	@r15,rr4	; push dest
+	pushl	@r15, rr6	; push source
+	call	_mem_bcp	; call C copy routine
+	ldl	rr6,4(r15)	; get dest into rr6
+	add	r7,8(r15)	; return dest plus length
+	inc	r15,#10		; restore stack
+	ret
+
+mem_map:		; map address
+				; rr6: source
+				; r4:  caller's seg.
+				; r5:  space
+				; r2:  caller's FCW
+
+	cp	r5,#-2		; space=-2: xfer
+	jp  eq	xfersc
+
+;*	ld	r4,scseg+co(r15)   Not done in Z8002 implementation
+	ld	r2,scfcw+co(r15)
+	calr	map_1
+	ldl	cr6+co(r15),rr6	; return rr6
+	ret
+
+map_1:				; dispatch
+
+	cp	r5,#0FFFFh
+	jr eq	set_usr		; space=-1: user seg
+
+	cpb	rl5,#0
+	jr eq	call_data
+	cpb	rl5,#1
+	jr eq	call_prog
+	cpb	rl5,#2
+	jr eq	sys_data
+	cpb	rl5,#3
+	jr eq	sys_prog
+	cpb	rl5,#4
+	jr eq	usr_data
+	cpb	rl5,#5
+	jr eq	usr_prog
+
+	ret			;default: no mapping
+
+set_usr:			;-1: set user (TPA code) bank.
+	ld	_usrseg,r6	; the code / I-bank.
+	ld	_usrdseg,r6	; default the DATA bank to the same (merged I/D);
+	ret			;   usr_data (below) overrides it for split-I/D.
+
+;*
+;*** THE FOLLOWING CODE IS SYSTEM-DEPENDENT ***
+;*
+;*	rr6= logical address
+;*	r4 = caller's PC segment - but NOT in the Z8002 implementation!
+;*	r2 = caller's FCW
+;*	 returns
+;*	rr6= mapped address
+;*
+;* This code is much simpler than the corresponding
+;* Z8001 code.  If the caller's FCW indicates that he
+;* was in Normal mode, then _usrseg is returned.
+;* Otherwise, pseudo-segment 0 is returned.
+;*
+
+call_data:
+	bit	r2,#14		; System caller?
+	jr nz	sys_data	; yes-- use system seg
+	ld	r6,_usrdseg	; no -- caller data lives in the TPA DATA bank
+	ret
+
+call_prog:
+	 bit	r2,#14		; System caller?
+	jr nz	sys_prog	; yes-- use system seg
+	ld	r6,_usrseg	; no 00 use pc segment
+	jr	map_prog	; map prog as data
+
+sys_data:
+sys_prog:
+	ld	r6, _sysseg
+	ret			; assume sys does not
+				; separate code, data
+
+usr_data:			; TPADATA (4): the loader's TPA DATA base.
+	;* Split-I/D only: pgmld calls map_adr(0,TPADATA) *solely* for split
+	;* programs, whose data/bss/stack occupy a SEPARATE physical bank from
+	;* their code.  The loader only told us the code bank (_usrseg, via
+	;* set_usr); derive the data bank as code-bank + 1 -- which matches the
+	;* memtab (SDREG = SPREG+1, i.e. bank 2 vs bank 1) -- and remember it in
+	;* _usrdseg so the run-time FCB/DMA bank injection (biostrap.8kn) and
+	;* xfersc's NBANK_D use the transient's data bank.  For merged programs
+	;* usr_data is never reached, so _usrdseg stays = _usrseg (set_usr).
+	ld	r6, _usrseg
+	add	r6, #0100h	; data bank = code bank + 1 (pseudo-seg high byte)
+	ld	_usrdseg, r6
+	ret
+
+usr_prog:
+	ld	r6, _usrseg
+	jr	map_prog
+
+
+map_prog:			; map program addr into data
+				; rr6 = address
+
+	and	r6,#7F00h	; extract seg bits
+
+	; kontron:   pseudo-segment 2 is the only one with
+	;	     separate I and D spaces, and
+	;	     the program space is accessed
+	;	     as pseudo-segment 1, data space as pseudo-segment 2
+
+	cpb	rh6,#2
+	ret ne
+	ldb	rh6,#1
+	ret
+
+;*
+;* The following routine copies a block of data from one part
+;* of the system address space to another.  In practice, part
+;* of the address space may be windowed, but that is transparent
+;* here.
+;*
+;* The interface is:
+;*	blkmov(source,dest,length)
+;*	short source,dest,length;
+;*
+
+_blkmov:
+	ld	r5,ARG1(r15)	; r5: source
+	ld	r4,ARG2(r15)	; r4: dest
+	ld	r2,ARG3(r15)	; r2: length (just a word!)
+	ld	r7,r2		; return value = bytes copied
+	ldirb	@r4,@r5,r2	;  copy!
+	ret
+
+;* _mem_bcp(sseg, source, dseg, dest, length) -- cross-bank block copy.
+;* Implemented in C (bios.c) now; it drives map_wdw/unwdw/blkmov below to
+;* window a TPA bank through the C3 aperture.  Only declared external here.
+
+;****************************************************
+;*	mem_mov -- C callable block move routine
+;*	input stack:
+;*		ret. addr	(word)
+;*		source		(word)
+;*		destination	(word)
+;*		length, bytes	(word)
+
+_mem_mov:
+	ld r5,2(r15)		; pull off source
+	ld r7,4(r15)		; pull off destination
+	ld r0,6(r15)		; pull off length
+	ldirb @r7,@r5,r0	; block move
+	ret
+
+;****************************************************
+;*	map_wdw(physchunk) -- C callable.  Window a physical 16 KB chunk into
+;*	the C3 aperture (logical 0xC000-0xFFFF) so the OS (system mode) can
+;*	reach a TPA bank.  Targets the Z8002-demo banking MMU (src/mmu.v):
+;*
+;*	    SAP0  (special-I/O 0xFFE4) = physchunk
+;*	    SSEL  (special-I/O 0xFFE3) = 0x08  (C3 = B aperture; C0-C2 = A)
+;*
+;*	With C0-C2 = A they map identity into SHOME (= bank 0, the OS), and C3
+;*	is the sole/lowest B chunk so it binds to SAP0 (mmu.v: b_before=0 ->
+;*	aperture = SAP0).  physchunk = TPA_bank*4 + chunk-within-bank.
+;****************************************************
+
+_map_wdw:
+	ld	r0,ARG1(r15)		; r0 = physical chunk number
+	soutb	0FFE4h,rl0		; SAP0 = physchunk
+	ldb	rl0,#08h		; C3 = B (aperture), C0-C2 = A (bank 0)
+	soutb	0FFE3h,rl0		; SSEL
+	ret
+
+;****************************************************
+;*	unwdw() -- close the aperture: SSEL = 0 (all chunks A -> bank 0 flat).
+;*	Called after a cross-bank copy so the OS is left in its normal state.
+;****************************************************
+
+_unwdw:
+	ldb	rl0,#0
+	soutb	0FFE3h,rl0		; SSEL = 0
+	ret
+
+;****************************************************
+;*
+;* Data
+;*
+;****************************************************
+
+__bss:	.sect
+
+_sysseg: .block 2	;system segment
+_usrseg: .block 2	;user (TPA code / I) bank
+_usrdseg: .block 2	;user TPA data / D bank (= _usrseg unless split-I/D)
+_sysstk: .block 2	;system stack pointer
+_psap:	 .block 2	;program status area ptr
+
+
+;****************************************************
+;****************************************************
+
+
+
+

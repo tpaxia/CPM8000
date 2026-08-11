@@ -3,8 +3,9 @@
 CPM8000 combines the original Digital Research/Zilog CP/M-8000 software with a
 hosted Z8000 emulator, reproducible source reconstruction, the original guest
 toolchain, target-oriented system generation, and logical CP/M media creation.
-The Olivetti M20 is the reference Z8001 target, while the hosted environment
-can execute both Z8001 and Z8002 CP/M.
+The Olivetti M20 is the reference Z8001 target, the Z8002-demo FPGA/MAME
+machine is the native non-segmented target, and the hosted environment can
+execute both Z8001 and Z8002 CP/M.
 
 ## Quick start
 
@@ -24,6 +25,17 @@ The emulator starts at the CP/M `C>` prompt with the original tools, sources,
 headers, libraries, examples, and `.sub` build recipes available.  Type `exit`
 to leave it.  Z8001 is the default hosted CPU, but `-M z8001` is shown
 explicitly here.
+
+Build the native Z8002-demo system and its shared FPGA/MAME hard-disk image:
+
+```sh
+make z8002-demo-image
+```
+
+This creates `z8002-demo.raw` and an uncompressed `z8002-demo.chd` under
+`build/media/z8002-demo/z8002-demo-hd/`. The raw image is consumed directly by
+the FPGA monitor; MAME uses the CHD wrapper. Both contain the same 64 KiB
+system prefix and CP/M filesystem.
 
 ## Overview
 
@@ -101,6 +113,7 @@ under `src/xoututils` are used only where the hosted emulator needs COFF:
 
 - `xarch` extracts members from an x.out archive.
 - `xout2coff` converts x.out objects to Z8k-COFF.
+- `xout2flat` converts a linked native system to the flat monitor payload.
 - `xoutdump` reports x.out headers, segments, relocations, and symbols.
 
 The hosted systems are assembled and linked on the host as follows:
@@ -201,9 +214,10 @@ boot sector.
 
 ### Sysgen
 
-The current sysgen implementation generates Z8001 systems.  It uses the
-hosted Z8001 environment as a build computer and runs the original compiler,
-assembler, and linker inside CP/M:
+Sysgen generates both segmented Z8001 and non-segmented Z8002 systems. Each
+BIOS package selects the hosted build CPU and system substrate (`cpmsys.rel`
+or `cpmsys2.rel`); the original compiler, assembler, and linker run inside
+that hosted CP/M environment:
 
 ```text
 stock BIOS sources from src/cpm8k + src/bios/<name>/ source overlay
@@ -212,7 +226,7 @@ stock BIOS sources from src/cpm8k + src/bios/<name>/ source overlay
                                v
                   build/bios/<name>/bios.rel
                                +
-                  cpmsys.rel and libcpm.a
+             selected CP/M system object and libcpm.a
                                |
                   in-guest SUBMIT LINKSYS
                                v
@@ -225,6 +239,12 @@ Commands and outputs:
 make system NAME=m20
 # build/bios/m20/bios.rel
 # build/system/m20/cpm.sys
+
+make system NAME=z8002-demo
+# build/bios/z8002-demo/bios.rel
+# build/system/z8002-demo/cpm.sys
+# build/system/z8002-demo/cpm.flat
+# build/system/z8002-demo/z8002-demo.boot
 
 make system NAME=m20 LOADER=1
 # also build/system/m20/cpmldr.sys
@@ -242,13 +262,14 @@ The BIOS-package build contract is:
 make -C src/bios/<name> bios.rel BUILDDIR=<directory>
 ```
 
-The package is a source overlay: common M20 BIOS sources are staged from
+The package is a source overlay: distribution BIOS sources are staged from
 `src/cpm8k`, then any `.c` or `.8kn` files in the package replace or extend
-them.  The [BIOS package guide](src/bios/README.md) describes the stock `m20`
-package and the `m20-serial` variant used for PTY-driven and headless testing.
-Z8002 sysgen will require `cpmsys2.rel`, a non-segmented BIOS baseline,
-an adapted FPE dependent half, and a corresponding loader; it is not yet
-implemented.
+them. The package's `CPMSYS` and `EMU_MODEL` metadata select the system object
+and hosted CPU. The [BIOS package guide](src/bios/README.md) describes the
+stock `m20` package and the `m20-serial` variant; the
+[`z8002-demo` package](src/bios/z8002-demo/README.md) documents its native MMU,
+console, ATA, and boot contract. A target can also provide a
+`system-artifacts` rule, as Z8002-demo does for its flat and padded payloads.
 
 ### Logical development media
 
@@ -269,12 +290,14 @@ Build either logical format:
 ```sh
 make media NAME=m20 FORMAT=m20-floppy-set
 make media NAME=m20 FORMAT=m20-hd
+make media NAME=z8002-demo FORMAT=z8002-demo-hd
 ```
 
 | Format | Output | Description |
 |--------|--------|-------------|
 | `m20-floppy-set` | `build/media/m20/m20-floppy-set/development-01.img` … `development-06.img` | Common tree split deterministically across six 280 KiB M20 CP/M filesystems |
 | `m20-hd` | `build/media/m20/m20-hd/development.img` | One 8,839,168-byte logical M20 CP/M hard-disk filesystem |
+| `z8002-demo-hd` | `build/media/z8002-demo/z8002-demo-hd/development.img` | CP/M filesystem occupying LBA 128 onward in the target disk |
 
 Every image is created at its full declared logical geometry and checked with
 `fsck.cpm`.  These are CP/M filesystem images only:
@@ -283,6 +306,17 @@ Every image is created at its full declared logical geometry and checked with
 - no boot sector is written because that requires the target's `putboot`
   procedure;
 - no CHD or other emulator-specific container is generated.
+
+Z8002-demo additionally has a target-specific packaging step:
+
+```sh
+make z8002-demo-image
+```
+
+It places the padded native system at LBA 0–127, the checked logical filesystem
+at LBA 128, and produces an exact 8 MiB raw disk plus an uncompressed CHD. This
+machine-specific composition deliberately remains outside the reusable logical
+media layer.
 
 The reusable format contract is documented in
 [`src/media/README.md`](src/media/README.md).  A target advertises compatible

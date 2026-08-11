@@ -11,6 +11,7 @@ The current packages are:
 |---------|---------|---------|
 | `m20` | M20 keyboard and video display | Builds the stock M20 BIOS without source overrides. |
 | `m20-serial` | M20 RS-232 terminal port at 9600 baud | Provides a serial console suitable for a host PTY, scripted sessions, and headless testing. |
+| `z8002-demo` | Z80-SIO channel B at 9600 baud | Native non-segmented Z8002 BIOS with banking-MMU and ATA support for the FPGA/MAME demo machine. |
 
 ## Why `m20-serial` exists
 
@@ -34,6 +35,7 @@ Select a package with `NAME`:
 ```sh
 make system NAME=m20
 make system NAME=m20-serial
+make system NAME=z8002-demo
 ```
 
 The resulting files are written to:
@@ -60,6 +62,9 @@ make media NAME=m20 FORMAT=m20-hd
 
 make media-formats NAME=m20-serial
 make media NAME=m20-serial FORMAT=m20-hd
+
+make media-formats NAME=z8002-demo
+make media NAME=z8002-demo FORMAT=z8002-demo-hd
 ```
 
 Media generation places the common development tree and the selected BIOS
