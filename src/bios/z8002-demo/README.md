@@ -3,9 +3,7 @@
 This package builds CP/M-8000 for a non-segmented Z8002-demo machine emulated
 by MAME. It uses Z80-SIO channel B for the console, a generic ATA task-file
 interface for disk I/O, and a system/normal banking MMU for CP/M's SC #1 memory
-services. A compatible physical implementation exists in
-`Z8000_FPGA/z8000_examples/cpm8000_z8002`; it realizes the ATA interface with
-KFMMC but does not change the BIOS-visible machine contract.
+services.
 
 The package selects the original non-segmented `cpmsys2.rel` and runs its guest
 build under the hosted Z8002 emulator.  Its Memory Region Table uses the
@@ -49,10 +47,25 @@ development files and target-specific BIOS and submit recipes.
 
 The validated monitor is included as `z8kmon.bin`, making the BIOS package
 self-contained. System generation copies it to
-`build/roms/z8002demo/z8kmon.bin`, the ROM-set layout expected by MAME. The
-monitor source remains with the compatible physical implementation under
-`Z8000_FPGA/z8000_examples/cpm8000_z8002/z8002-bios`. MAME consumes the CHD;
-the physical implementation can consume the corresponding raw image.
+`build/roms/z8002demo/z8kmon.bin`, the ROM-set layout expected by MAME. MAME
+consumes the CHD; the corresponding raw image is also retained.
+
+## Memory model
+
+`cpmsys2.rel` supplies the non-segmented Z8002 CCP and BDOS, but does not
+implement a hardware MMU. Memory management is part of the BIOS and machine.
+The hosted Z8002 BIOS and this native BIOS expose the same CP/M-visible model:
+the system occupies bank 0, merged-I/D programs use bank 1, and split-I/D
+programs use bank 1 for instructions and bank 2 for data. Pseudo-segment tags
+store the bank number in their high byte.
+
+Their mechanisms differ. The hosted emulator implements those mappings
+directly in host software. The MAME machine emulates the native six-register
+MMU: normal mode selects complete instruction and data banks independently,
+while system mode maps four 16 KiB chunks and provides two movable apertures.
+The BIOS uses one aperture to copy programs between system memory and TPA
+banks. Thus the hosted and MAME systems implement the same CP/M memory ABI,
+but they do not use the same MMU implementation or the same BIOS binary.
 
 ## Running in MAME
 
