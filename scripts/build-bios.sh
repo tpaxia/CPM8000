@@ -27,13 +27,13 @@ OUT=${1:-build/bios-src}
 }
 
 # Sources bios.sub needs. biosasm.8kn pulls in the other .8kn files via
-# `.input`, so they must be present too. fpe.o/fpedep.o are used prebuilt here;
-# the distribution did not ship their sources, while the maintained sources
-# are rebuilt separately by scripts/build-fpe.sh. asz8k.pd is the predef.
+# `.input`, so they must be present too. Target-specific FPE objects are used
+# from src/fpe/objects; scripts/regenerate-fpe-objects.sh rebuilds them from the
+# maintained sources. asz8k.pd is the predef.
 SOURCES="bios.c \
          biosasm.8kn biosdefs.8kn biosboot.8kn biosif.8kn biosio.8kn \
          biosmem.8kn biostrap.8kn syscall.8kn \
-         fpe.o fpedep.o asz8k.pd"
+         asz8k.pd"
 
 # In-guest toolchain. asz8k chains to xcon (.OBJ -> .o); zcc chains to
 # zcc1/zcc2/zcc3.
@@ -46,6 +46,21 @@ trap 'rm -rf "$DRIVE"' EXIT INT TERM
 
 echo "staging build inputs into temp drive: $DRIVE"
 for f in $SOURCES $TOOLS; do cp "$SRC/$f" "$DRIVE/"; done
+
+case "$EMU_MODEL" in
+z8001)
+	cp "src/fpe/objects/z8001/fpe.o" "$DRIVE/fpe.o"
+	cp "src/fpe/objects/z8001/fpedep.o" "$DRIVE/fpedep.o"
+	;;
+z8002)
+	cp "src/fpe/objects/z8002/fpe.o" "$DRIVE/fpe.o"
+	cp "src/fpe/objects/z8002/fpedep.o" "$DRIVE/fpedep.o"
+	;;
+*)
+	echo "error: unsupported EMU_MODEL '$EMU_MODEL'" >&2
+	exit 2
+	;;
+esac
 
 # Optional BIOS overlay: a package dir (e.g. src/bios/<name>) supplies the
 # BIOS-specific sources (.c/.8kn) that override or add to the stock M20 set --

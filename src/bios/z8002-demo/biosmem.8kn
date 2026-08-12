@@ -195,14 +195,16 @@ usr_data:			; TPADATA (4): the loader's TPA DATA base.
 	;* Split-I/D only: pgmld calls map_adr(0,TPADATA) *solely* for split
 	;* programs, whose data/bss/stack occupy a SEPARATE physical bank from
 	;* their code.  The loader only told us the code bank (_usrseg, via
-	;* set_usr); derive the data bank as code-bank + 1 -- which matches the
-	;* memtab (SDREG = SPREG+1, i.e. bank 2 vs bank 1) -- and remember it in
-	;* _usrdseg so the run-time FCB/DMA bank injection (biostrap.8kn) and
-	;* xfersc's NBANK_D use the transient's data bank.  For merged programs
-	;* usr_data is never reached, so _usrdseg stays = _usrseg (set_usr).
+	;* set_usr).  FPE also uses TPADATA to map nonzero operand addresses, so
+	;* only the loader's zero-base request selects the split data bank.
+	testl	rr6
+	jr	nz,udata_cur
 	ld	r6, _usrseg
 	add	r6, #0100h	; data bank = code bank + 1 (pseudo-seg high byte)
 	ld	_usrdseg, r6
+	ret
+udata_cur:
+	ld	r6, _usrdseg
 	ret
 
 usr_prog:
@@ -310,6 +312,4 @@ _psap:	 .block 2	;program status area ptr
 
 ;****************************************************
 ;****************************************************
-
-
 

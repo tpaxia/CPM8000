@@ -9,15 +9,16 @@ CP/M in either Z8001 or Z8002 mode.
 ## Quick start
 
 After installing the [build prerequisites](#prerequisites), clone the repository
-with its Z8000 CPU-emulator submodule, build the default hosted Z8001 system,
-and run it with the complete CP/M-8000 development tree mounted as drive C:
+with its Z8000 CPU-emulator submodule, build the hosted systems, compose the
+Z8001 development drive, and mount it as drive C:
 
 ```sh
 git clone --recurse-submodules https://github.com/tpaxia/CPM8000.git
 cd CPM8000
 make
+make dev-z8001
 build/emu/cpm8k-z8001 \
-  -d C=dir:src/cpm8k
+  -d C=dir:drives/dev-z8001
 ```
 
 The emulator starts at the CP/M `C>` prompt with the original tools, sources,
@@ -25,13 +26,18 @@ headers, libraries, examples, and `.sub` build recipes available. Type `exit`
 to leave it. Run the Z8002 hosted system with:
 
 ```sh
-make bios-emu-z8002 emu
+make dev-z8002
 build/emu/cpm8k-z8002 \
-  -d C=dir:src/cpm8k
+  -d C=dir:drives/dev-z8002
 ```
 
-Both modes can mount the same directory-backed development tree or the same
-CP/M filesystem image, but they do not run the same system binary. Before
+Each generated drive contains the common distribution/toolchain tree plus the
+selected BIOS, FPE definitions, and conventional unsuffixed submit recipes.
+Thus `SUBMIT FPE`, `SUBMIT BIOS`, and `SUBMIT CPMSYS` build the selected target
+without mixing Z8001 and Z8002 inputs. The directories are generated and
+ignored by Git; `src/cpm8k` remains the distribution-oriented source base.
+
+The two modes do not run the same system binary. Before
 starting the emulated CPU, the host loads the matching CPU-specific system:
 `build/bios-emu-z8001/cpm.sys` for `cpm8k-z8001` or
 `build/bios-emu-z8002/cpm.sys` for `cpm8k-z8002`. These files are not loaded from
@@ -102,12 +108,16 @@ replaces:
 | `ld8k.z8k` | From-source linker that supports the required `-r` path |
 | `fpe.8kn` | Maintained software floating-point emulator source |
 | `fpedep.8kn` | Reconstructed Z8001/M20-dependent FPE support |
-| `biosdefs.z8k` | Segmented trap-frame definitions used by FPE |
+| `biosdefs.z8k` | Segmented Z8001 trap-frame definitions used by FPE |
 | `fpe.sub` | In-guest FPE rebuild recipe |
 
 The overlay is reproducible from `src/linker`, `src/fpe`, and `scripts/fpe.sub`.
-The FPE core will eventually be separated from its Z8001/M20-dependent half so
-that a Z8002 adaptation can be built cleanly.
+The hosted systems use the shared FPE core with separate Z8001 and Z8002
+saved-frame and memory-mapping helpers. `make fpe-regression` exercises both.
+The normal host build converts checked-in target-specific x.out objects from
+`src/fpe/objects`; it does not run CP/M to bootstrap itself. Use
+`make verify-fpe-objects` to rebuild both variants with the original assembler
+under their matching hosted CPUs and compare them with those objects.
 
 ### Original guest formats and host conversion
 
@@ -187,11 +197,11 @@ There is no mode-neutral executable: the name always identifies the CPU model.
 At least one drive must be configured:
 
 ```sh
-# Hosted Z8001 (the default)
-build/emu/cpm8k-z8001 -d C=dir:src/cpm8k
+# Hosted Z8001
+build/emu/cpm8k-z8001 -d C=dir:drives/dev-z8001
 
-# Hosted Z8002 using the same files
-build/emu/cpm8k-z8002 -d C=dir:src/cpm8k
+# Hosted Z8002
+build/emu/cpm8k-z8002 -d C=dir:drives/dev-z8002
 
 # Native CP/M filesystem image
 build/emu/cpm8k-z8002 \
@@ -208,14 +218,14 @@ The executable selects its matching host-loaded system at build time. A guest
 file and does not replace the running hosted system. Before the CP/M sign-on,
 the hosted emulator also prints the active CPU mode.
 
-The Z8001 and Z8002 implementations have been validated by running the same
-ten submit pipelines (`ASZ8K`, `LD8K`, `FPE`, `BIOS`, `CPMSYS`, `LINKSYS`,
-`MAKELDR`, `MKPUTBT`, `WUMP`, and `TICTAC`) and comparing every resulting file
-byte-for-byte. `make submit-regression` repeats this validation for both CPUs
-and checks the resulting binaries against `tests/submit-regression.sha256`.
-That manifest was recorded with the pre-refactor Z8001 emulator at commit
-`075c8e9`. Recording a replacement requires both `--record` and an explicit
-known-good executable in `CPM8K_EMU`; a normal test never accepts new hashes.
+Z8001 is validated with ten submit pipelines: `ASZ8K`, `LD8K`, `FPE`, `BIOS`,
+`CPMSYS`, `LINKSYS`, `MAKELDR`, `MKPUTBT`, `WUMP`, and `TICTAC`. Z8002 runs the
+same set except the M20-specific `MAKELDR` and `MKPUTBT`; Z8002-demo uses its
+monitor payload and ATA image builder instead. Common tools and applications
+are expected to match. FPE, BIOS, and system artifacts have target-specific
+hashes because the call frames, BIOS, and CCP/BDOS differ. `make
+submit-regression` composes and tests both target trees against separate
+manifests in `tests/`.
 
 ## System generation and development media
 
@@ -279,6 +289,17 @@ native-system and MAME workflow. A target can also provide a
 `system-artifacts` rule for additional target-specific outputs.
 
 ### Logical development media
+
+For a host-backed edit/build loop, compose a persistent target drive:
+
+```sh
+make dev-z8001                 # drives/dev-z8001
+make dev-z8002                 # drives/dev-z8002
+```
+
+Each command starts from `src/cpm8k` and applies the same target selection used
+by regression and logical-media generation. Rebuilding replaces the directory
+as a unit, preventing stale files from another target from surviving.
 
 Development media contain the common CP/M-8000 tools, sources, headers,
 libraries, examples, and self-contained submit files. A target package adds

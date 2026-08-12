@@ -4,6 +4,7 @@
 	.include "biosdef.s"
 
 	.extern __bdos
+	.extern fp_epu
 	.global trapinit, _trap, _trap_ret, bdossc, biossc, memsc
 	.global _bios, _bdos, _xfer, _mem_cpy, _map_adr
 	.global _sysseg, _usrseg, _usrdseg, _sysstk, psa, _trapvec
@@ -154,6 +155,8 @@ trapinit:
 	ldl	_trapvec+(BIOS_SC+SC0TRAP)*4, rr2
 	lda	r3, memsc
 	ldl	_trapvec+(MEM_SC+SC0TRAP)*4, rr2
+	lda	r3, fp_epu
+	ldl	_trapvec+EPUTRAP*4, rr2
 
 	lda	r5, psa
 	ld	r0, #0x5800

@@ -54,6 +54,18 @@ make -C src/bios/<name> bios.rel BUILDDIR=<directory>
 
 ## Development media
 
+Create a persistent host-backed development drive with conventional CP/M
+filenames and submit commands for one CPU target:
+
+```sh
+make dev-z8001   # src/cpm8k plus the M20/Z8001 selection
+make dev-z8002   # src/cpm8k plus the Z8002-demo selection
+```
+
+The results are `drives/dev-z8001` and `drives/dev-z8002`. They are generated,
+not source trees. Automated regression and logical-media generation call the
+same staging operation in temporary directories.
+
 The package also declares the logical media formats on which its source
 overlay can be supplied:
 

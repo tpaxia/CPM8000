@@ -105,6 +105,20 @@ injected.
 - Rebuild the BDOS with the `_usrseg`/`_usrdseg` tag enabled -> remove the injection so the
   pointer isn't tagged twice.
 
+## Floating-point trap and data mapping
+
+`trapinit` installs `fp_epu` in `_trapvec[EPUTRAP]`; merely linking `fpe.o` is
+not sufficient. The FPE then uses `MEM_SC` map 4 for operand accesses in the
+current TPA data space.
+
+Map 4 has two callers with different intent. The loader's
+`map_adr(0, TPADATA)` request initializes a split-I/D program by selecting the
+bank after `_usrseg` and saving it in `_usrdseg`. An FPE request has a nonzero
+operand address and must return the existing `_usrdseg`, whether the program
+is merged or split-I/D. Treating every map-4 request as loader initialization
+would move a merged program's data accesses to bank 2 and corrupt the trap
+return.
+
 ## File map
 
 | File | Role |
@@ -127,3 +141,5 @@ Working end to end: boot, console, `dir`, `type`, built-in writes (`ren`,
   through zcc1/zcc2/zcc3 (each a split transient, up to ~54 KB of code, code in
   the I-bank and data in the D-bank) and emits a valid `HELLO.O` (x.out `0xEE02`
   object).
+- FPE: the Z8002 floating-point regression runs on the MAME machine through
+  the native trap/MMU path and reports `FPTEST PASS` over the serial console.

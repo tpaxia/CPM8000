@@ -18,7 +18,9 @@ XARCH = $(BUILDDIR)/tools/xarch
 XOUT2COFF = $(BUILDDIR)/tools/xout2coff
 LIBDIR = $(BUILDDIR)/lib
 FPE_Z8001_DIR = $(BUILDDIR)/fpe-z8001
-.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats z8002-demo-image submit-regression submit-regression-z8001 submit-regression-z8002 fpe-regression fpe-regression-z8001
+FPE_Z8002_DIR = $(BUILDDIR)/fpe-z8002
+FPE_OBJECTS = src/fpe/objects
+.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats z8002-demo-image dev-z8001 dev-z8002 submit-regression submit-regression-z8001 submit-regression-z8002 fpe-regression fpe-regression-z8001 fpe-regression-z8002 regenerate-fpe verify-fpe-objects
 
 all: emu
 
@@ -50,6 +52,12 @@ media-formats:
 z8002-demo-image:
 	scripts/build-z8002-demo-hd.sh
 
+dev-z8001:
+	scripts/build-development-drive.sh z8001
+
+dev-z8002:
+	scripts/build-development-drive.sh z8002
+
 # --- Build host tools ---
 tools: $(XARCH) $(XOUT2COFF)
 
@@ -80,10 +88,15 @@ $(LIBDIR)/cpmsys2.o: $(XOUT2COFF)
 	cp $(SRCDIR)/cpmsys2.rel $(LIBDIR)/cpmsys2.rel
 	cd $(LIBDIR) && $(abspath $(XOUT2COFF)) cpmsys2.rel
 
-$(FPE_Z8001_DIR)/%.o: $(SRCDIR)/%.o $(XOUT2COFF)
+$(FPE_Z8001_DIR)/%.o: $(FPE_OBJECTS)/z8001/%.o $(XOUT2COFF)
 	mkdir -p $(FPE_Z8001_DIR)
 	cp $< $(FPE_Z8001_DIR)/$*.rel
 	cd $(FPE_Z8001_DIR) && $(abspath $(XOUT2COFF)) $*.rel
+
+$(FPE_Z8002_DIR)/%.o: $(FPE_OBJECTS)/z8002/%.o $(XOUT2COFF)
+	mkdir -p $(FPE_Z8002_DIR)
+	cp $< $(FPE_Z8002_DIR)/$*.rel
+	cd $(FPE_Z8002_DIR) && $(abspath $(XOUT2COFF)) $*.rel
 
 $(LIBDIR)/libcpm.a: $(LIBDIR)/.done
 	$(AR) rcs $@ $(LIBDIR)/*.o
@@ -96,13 +109,19 @@ bios-emu: bios-emu-z8001
 bios-emu-z8001: lib $(FPE_Z8001_DIR)/fpe.o $(FPE_Z8001_DIR)/fpedep.o
 	$(MAKE) -C src/cpm8kemu/bios-z8001 BUILDDIR=$(abspath $(BUILDDIR)/bios-emu-z8001) LIBDIR=$(abspath $(LIBDIR)) FPEDIR=$(abspath $(FPE_Z8001_DIR))
 
-bios-emu-z8002: lib $(LIBDIR)/cpmsys2.o
-	$(MAKE) -C src/cpm8kemu/bios-z8002 BUILDDIR=$(abspath $(BUILDDIR)/bios-emu-z8002) LIBDIR=$(abspath $(LIBDIR))
+bios-emu-z8002: lib $(LIBDIR)/cpmsys2.o $(FPE_Z8002_DIR)/fpe.o $(FPE_Z8002_DIR)/fpedep.o
+	$(MAKE) -C src/cpm8kemu/bios-z8002 BUILDDIR=$(abspath $(BUILDDIR)/bios-emu-z8002) LIBDIR=$(abspath $(LIBDIR)) FPEDIR=$(abspath $(FPE_Z8002_DIR))
 
 # --- Build emulator host program (cross-platform CMake build) ---
 emu: bios-emu-z8001 bios-emu-z8002
 	cmake -S . -B $(BUILDDIR)/emu -DCMAKE_BUILD_TYPE=Release
 	cmake --build $(BUILDDIR)/emu
+
+regenerate-fpe: emu
+	scripts/regenerate-fpe-objects.sh
+
+verify-fpe-objects: emu
+	scripts/regenerate-fpe-objects.sh --verify
 
 submit-regression: submit-regression-z8001 submit-regression-z8002
 
@@ -112,10 +131,13 @@ submit-regression-z8001: emu
 submit-regression-z8002: emu
 	scripts/test-submit-regression.sh z8002
 
-fpe-regression: fpe-regression-z8001
+fpe-regression: fpe-regression-z8001 fpe-regression-z8002
 
 fpe-regression-z8001: emu
 	scripts/test-fpe.sh z8001
+
+fpe-regression-z8002: emu
+	scripts/test-fpe.sh z8002
 
 clean:
 	rm -rf $(BUILDDIR)

@@ -1,0 +1,11 @@
+; Minimal definitions used by the FPE on the non-segmented Z8002 target.
+
+MEM_SC	.equ	1
+co	.equ	2		; non-segmented call return address size
+pcbase	.equ	34		; frame offset preceding saved PC
+
+SEG	.MACRO
+	.ENDM
+
+NONSEG	.MACRO
+	.ENDM

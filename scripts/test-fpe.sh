@@ -9,8 +9,8 @@ cd "$ROOT"
 
 MODEL=${1:-z8001}
 case "$MODEL" in
-	z8001) ;;
-	*) echo "usage: $0 [z8001]" >&2; exit 2 ;;
+	z8001|z8002) ;;
+	*) echo "usage: $0 [z8001|z8002]" >&2; exit 2 ;;
 esac
 
 EMU=build/emu/cpm8k-$MODEL

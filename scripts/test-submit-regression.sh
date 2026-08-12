@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the ten canonical submit pipelines on one fresh host-backed CP/M drive
+# Build the applicable submit pipelines on one fresh target-specific CP/M drive
 # and compare their final artifacts with the checked-in SHA-256 baseline.
 
 set -eu
@@ -23,16 +23,15 @@ EMU=${CPM8K_EMU:-build/emu/cpm8k-$MODEL}
 EMU_MODEL_ARG=
 [ -z "${CPM8K_EMU:-}" ] || EMU_MODEL_ARG="-M $MODEL"
 if [ "$RECORD" -eq 1 ]; then
-	[ "$MODEL" = z8001 ] || {
-		echo "error: the baseline must be recorded with Z8001" >&2
-		exit 2
-	}
 	[ -n "${CPM8K_EMU:-}" ] || {
 		echo "error: --record requires CPM8K_EMU=<known-good-emulator>" >&2
 		exit 2
 	}
 fi
-BASELINE=tests/submit-regression.sha256
+case "$MODEL" in
+	z8001) BASELINE=tests/submit-regression.sha256 ;;
+	z8002) BASELINE=tests/submit-regression-z8002.sha256 ;;
+esac
 OUT=build/submit-regression/$MODEL
 [ -x "$EMU" ] || { echo "error: $EMU missing -- run 'make emu'" >&2; exit 1; }
 [ -s "build/bios-emu-$MODEL/cpm.sys" ] || {
@@ -45,7 +44,9 @@ trap 'rm -rf "$DRIVE"' EXIT INT TERM
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-scripts/media/stage-development.sh "$DRIVE"
+BIOS_OVERLAY=
+[ "$MODEL" = z8002 ] && BIOS_OVERLAY="$ROOT/src/bios/z8002-demo"
+scripts/media/stage-development.sh "$DRIVE" "$BIOS_OVERLAY" "$MODEL"
 
 run_submit()
 {
@@ -92,13 +93,15 @@ copy_result CPM.SYS cpmsys-cpm.sys
 rm -f "$DRIVE/CPM.SYS"
 run_submit LINKSYS
 copy_result CPM.SYS linksys-cpm.sys
-rm -f "$DRIVE/CPMLDR.REL" "$DRIVE/CPMLDR.SYS"
-run_submit MAKELDR
-copy_result CPMLDR.REL cpmldr.rel
-copy_result CPMLDR.SYS cpmldr.sys
-rm -f "$DRIVE/PUTBOOT.Z8K"
-run_submit MKPUTBT
-copy_result PUTBOOT.Z8K putboot.z8k
+if [ "$MODEL" = z8001 ]; then
+	rm -f "$DRIVE/CPMLDR.REL" "$DRIVE/CPMLDR.SYS"
+	run_submit MAKELDR
+	copy_result CPMLDR.REL cpmldr.rel
+	copy_result CPMLDR.SYS cpmldr.sys
+	rm -f "$DRIVE/PUTBOOT.Z8K"
+	run_submit MKPUTBT
+	copy_result PUTBOOT.Z8K putboot.z8k
+fi
 rm -f "$DRIVE/WUMP.Z8K"
 run_submit WUMP
 copy_result WUMP.Z8K wump.z8k

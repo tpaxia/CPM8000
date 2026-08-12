@@ -30,6 +30,7 @@ __text:	.sect
 
 	.global	__bios		;C portion of BIOS
 	.global	memsc		;memory-management SC
+	.global	fp_epu		;floating-point emulator
 
 	.global _sysseg, _usrseg, _usrdseg, _sysstk, _psap
 
@@ -316,6 +317,8 @@ clrtraps:
 	ldl	_trapvec+(BIOS_SC+SC0TRAP)*4,rr2
 	lda	r3,memsc
 	ldl	_trapvec+(MEM_SC+SC0TRAP)*4,rr2
+	lda	r3,fp_epu
+	ldl	_trapvec+EPUTRAP*4,rr2
 
 
 ; initialize some PSA entries.
