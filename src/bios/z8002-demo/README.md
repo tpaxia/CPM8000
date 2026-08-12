@@ -39,3 +39,21 @@ self-contained. System generation copies it to
 monitor source remains with the compatible physical implementation under
 `Z8000_FPGA/z8000_examples/cpm8000_z8002/z8002-bios`. MAME consumes the CHD;
 the physical implementation can consume the corresponding raw image.
+
+## Running in MAME
+
+Running the machine requires these two development branches:
+
+- the [`z8002-demo` BIOS branch of CPM8000](https://github.com/tpaxia/CPM8000/tree/z8002-demo), containing this BIOS, the monitor and disk-image pipeline;
+- the [`z8002-demo` branch of the tpaxia MAME fork](https://github.com/tpaxia/mame/tree/z8002-demo), containing the emulated machine.
+
+Build MAME from that branch, run `make z8002-demo-image` in CPM8000, and then
+run the resulting MAME executable from the CPM8000 repository root:
+
+```sh
+/path/to/mame z8002demo \
+  -rompath build/roms \
+  -hard build/media/z8002-demo/z8002-demo-hd/z8002-demo.chd
+```
+
+Enter `z` at the monitor prompt to boot CP/M from the ATA disk.

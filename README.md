@@ -36,7 +36,23 @@ This creates `z8002-demo.raw` and an uncompressed `z8002-demo.chd` under
 `build/media/z8002-demo/z8002-demo-hd/`. MAME uses the CHD; the raw image is
 available to compatible physical implementations. Both contain the same 64
 KiB system prefix and CP/M filesystem. The checked-in monitor is copied to
-`build/roms/z8002demo/z8kmon.bin`; launch MAME with `-rompath build/roms`.
+`build/roms/z8002demo/z8kmon.bin`.
+
+Running the machine requires these two development branches:
+
+- the [`z8002-demo` BIOS branch of CPM8000](https://github.com/tpaxia/CPM8000/tree/z8002-demo), containing the BIOS, monitor and disk-image pipeline;
+- the [`z8002-demo` branch of the tpaxia MAME fork](https://github.com/tpaxia/mame/tree/z8002-demo), containing the emulated machine.
+
+Build MAME from that branch, then run its `mame` executable from the CPM8000
+repository root:
+
+```sh
+/path/to/mame z8002demo \
+  -rompath build/roms \
+  -hard build/media/z8002-demo/z8002-demo-hd/z8002-demo.chd
+```
+
+Enter `z` at the monitor prompt to boot CP/M from the ATA disk.
 
 ## Overview
 
