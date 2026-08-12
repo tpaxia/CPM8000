@@ -6,7 +6,7 @@
 # tree (src/cpm8k): it overrides only the files that change for the Z8002
 # machine:
 #   bios.c        -- Z80-SIO console, ATA disk, Z8002 cold boot
-#   biosmem.8kn   -- SC #1 memory management via the banking MMU (MEMORY_MODEL)
+#   biosmem.8kn   -- SC #1 memory management via the banking MMU (see TPA.md)
 #   (+ any I/O-def overrides)
 #
 # Build:  make system NAME=z8002-demo

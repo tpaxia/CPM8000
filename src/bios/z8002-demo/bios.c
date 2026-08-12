@@ -104,7 +104,7 @@ char copyright[] = "Copyright 1984  Digital Research Inc.";
 /************************************************************************/
 
 /* Z8002-demo console: Zilog Z80-SIO Channel B, baud from the Z80-CTC.
- * Data reg 0xFF1B, control/status reg 0xFF1F (see HARDWARE.md). serin/serout
+ * Data reg 0xFF1B, control/status reg 0xFF1F. serin/serout
  * use RS232+SERDATA (data) and RS232+SERSTAT (RR0 status).			*/
 
 #define KBD	0xFF1B		/* (unused -- single console)		*/

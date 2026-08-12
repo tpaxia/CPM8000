@@ -67,6 +67,11 @@ The BIOS uses one aperture to copy programs between system memory and TPA
 banks. Thus the hosted and MAME systems implement the same CP/M memory ABI,
 but they do not use the same MMU implementation or the same BIOS binary.
 
+See [TPA.md](TPA.md) for the complete CP/M memory ABI, bank layout, trap
+transitions, and BIOS mapping operations. The accompanying [mmu.v](mmu.v) is
+the reference RTL implementation of that memory model; MAME implements the
+same translation rules in `src/mame/zilog/z8002demo.cpp`.
+
 ## Running in MAME
 
 Build the [`z8002-demo` branch of the tpaxia MAME fork](https://github.com/tpaxia/mame/tree/z8002-demo),

@@ -13,7 +13,7 @@ __text:	.sect
 	.global	_cold_boot
 
 ;****************************************************
-;* I/O ports (HARDWARE.md)
+;* Z8002-demo machine I/O ports
 ;****************************************************
 
 SIODB	.equ	0FF1Bh		; SIO Ch.B data

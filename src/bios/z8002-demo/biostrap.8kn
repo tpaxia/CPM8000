@@ -119,7 +119,7 @@ trap_disp:			; dispatch
 ;*
 ;* The OS (CCP/BDOS/BIOS) runs in SYSTEM mode, physical bank 0.  A transient
 ;* program runs in NORMAL mode in its own TPA bank (NBANK_I/NBANK_D, e.g.
-;* bank 1 -- see biosmem.8kn / MEMORY_MODEL.md).  When the transient calls the
+;* bank 1 -- see biosmem.8kn / TPA.md).  When the transient calls the
 ;* BDOS it passes an FCB/DMA pointer as a BARE 16-BIT OFFSET (rr6 = 0:offset):
 ;* a non-segmented program cannot know its own bank, because NBANK_* are
 ;* privileged special-I/O registers it may not read.

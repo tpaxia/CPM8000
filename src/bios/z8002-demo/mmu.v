@@ -1,7 +1,7 @@
 // ============================================================================
 // mmu.v - CP/M-8000 on Z8002 banking MMU
 //
-// Implements the two-tier memory-management unit specified in MEMORY_MODEL.md:
+// Implements the two-tier memory-management unit specified in TPA.md:
 //
 //   * Logical address  : 16 bits (64 KB) from the non-segmented Z8002.
 //                        A[15:14] = chunk (C0..C3, four 16 KB chunks)
@@ -20,7 +20,7 @@
 //       The 1st (lowest-index) B chunk uses SAP0, the 2nd uses SAP1.
 //
 // Registers are written by privileged special-I/O (SOUT) and are only writable
-// in system mode; normal-mode writes are ignored.  See §4/§9 of MEMORY_MODEL.md.
+// in system mode; normal-mode writes are ignored.  See TPA.md.
 //
 // Reset default (§8): system mode, SHOME = 4 (ROM bank), SSEL = 0 (all A), so
 // every logical address is an identity map into the ROM bank and the Z8002
@@ -47,7 +47,7 @@ module mmu (
 );
 
     // ------------------------------------------------------------------
-    // Register file (23 bits total, MEMORY_MODEL.md §4)
+    // Register file (23 bits total; see TPA.md)
     // ------------------------------------------------------------------
     reg [2:0] nbank_i;   // normal-mode instruction bank
     reg [2:0] nbank_d;   // normal-mode data bank
@@ -56,7 +56,7 @@ module mmu (
     reg [4:0] sap0;      // aperture 0 physical 16 KB chunk#
     reg [4:0] sap1;      // aperture 1 physical 16 KB chunk#
 
-    // Register selectors (special-I/O offsets, see HARDWARE.md)
+    // Register selectors (special-I/O offsets; see TPA.md)
     localparam SEL_NBANK_I = 3'd0;
     localparam SEL_NBANK_D = 3'd1;
     localparam SEL_SHOME   = 3'd2;
@@ -93,7 +93,7 @@ module mmu (
     end
 
     // ------------------------------------------------------------------
-    // Address translation (combinational, MEMORY_MODEL.md §5)
+    // Address translation (combinational; see TPA.md)
     // ------------------------------------------------------------------
     wire [1:0]  lchunk = laddr[15:14];   // logical chunk 0..3
     wire [13:0] off    = laddr[13:0];    // in-chunk offset (passthrough)
