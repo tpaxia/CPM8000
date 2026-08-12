@@ -19,6 +19,9 @@ BDOS_SC	.equ	2
 MEM_SC	.equ	1
 DEBUG_SC .equ	0
 
+co	.equ	4		; segmented call return address size
+pcbase	.equ	36		; frame offset preceding saved PC
+
 ;* the traps use numbers similar to those in the
 ;* 68K version of P-CP/M
 
@@ -130,4 +133,3 @@ scfcw	.equ  scinst+2	;WORD	caller FCW
 scseg	.equ  scfcw+2	;WORD	caller PC SEG
 scpc	.equ  scseg+2	;WORD	caller PC OFFSET
 FRAMESZ .equ scpc+2
-

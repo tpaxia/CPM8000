@@ -10,9 +10,10 @@ build under the hosted Z8002 emulator.  Its Memory Region Table uses the
 representation expected by that binary: bank 1 is `0x01000000`, bank 2 is
 `0x02000000`, and bank 3 is `0x03000000`.
 
-Its `CPMSYS.SUB` and `LINKSYS.SUB` overrides also select `cpmsys2.rel`, so the
-same submit commands can be validated on hosted Z8002 CP/M and on the MAME
-machine without accidentally rebuilding a segmented Z8001 system.
+Its `CPMSYS.SUB` and `LINKSYS.SUB` overrides select `cpmsys2.rel`. Run
+`make dev-z8002` to compose these overrides, the Z8002 FPE definitions, and the
+common toolchain as `drives/dev-z8002`; the ordinary unsuffixed submit commands
+then build only the Z8002 target.
 
 The complete development submit suite has been run from a clean disk under
 MAME: `ASZ8K`, `LD8K`, `FPE`, `BIOS`, `CPMSYS`, `LINKSYS`, `WUMP`, and
@@ -21,10 +22,17 @@ MAME: `ASZ8K`, `LD8K`, `FPE`, `BIOS`, `CPMSYS`, `LINKSYS`, `WUMP`, and
 match the corresponding canonical builds. `FPE.O` is the original logical
 object with CP/M record padding in its final byte.
 
+The floating-point regression has also been run on the native MAME machine.
+The Z8002 `FPTEST.Z8K` executable was copied to a disposable image, booted
+through the monitor, and executed over the serial console; it reported
+`FPTEST PASS`. This exercises MAME's Z8002, the native trap bridge and MMU, and
+the linked software FPE rather than the hosted emulator path.
+
 Build the system and the complete 8 MiB development disk with:
 
 ```sh
 make system NAME=z8002-demo
+make dev-z8002
 make z8002-demo-image
 ```
 
@@ -44,6 +52,12 @@ The outputs are:
 The disk begins with the native Z8002 `cpm.sys` payload rather than relying on
 the hosted emulator's system loader. Its CP/M filesystem contains the common
 development files and target-specific BIOS and submit recipes.
+
+The Z8002 development tree does not include the M20 `MAKELDR.SUB` or
+`MKPUTBT.SUB`. The stock loader wrapper conflicts with symbols owned by the
+Z8002 BIOS and has not been adapted because Z8002-demo boots through its
+included monitor. The image builder installs the generated system payload
+directly in the ATA boot area; `MKPUTBT` implements the unrelated M20 layout.
 
 The validated monitor is included as `z8kmon.bin`, making the BIOS package
 self-contained. System generation copies it to
@@ -66,6 +80,12 @@ while system mode maps four 16 KiB chunks and provides two movable apertures.
 The BIOS uses one aperture to copy programs between system memory and TPA
 banks. Thus the hosted and MAME systems implement the same CP/M memory ABI,
 but they do not use the same MMU implementation or the same BIOS binary.
+
+The native BIOS installs `fp_epu` as the EPU trap handler. FPE operand access
+uses `MEM_SC` map 4 to reach the current TPA data bank. A zero-address map-4
+request from the program loader selects the separate split-I/D data bank;
+nonzero FPE operand mappings retain the data bank already selected for the
+running program.
 
 See [TPA.md](TPA.md) for the complete CP/M memory ABI, bank layout, trap
 transitions, and BIOS mapping operations. The accompanying [mmu.v](mmu.v) is

@@ -553,19 +553,43 @@ from the shipped product is explicit:
   distribution images (`distribution/CPM_8000_1.1/*.IMG`) with cpmtools +
   `src/diskdefs_m20.mame`.
 - `make overlay` -- install the maintained linker and reconstructed FPE source
-  set (`fpe.8kn`, `fpedep.8kn`, `biosdefs.z8k`, and `fpe.sub`).
+  set (`fpe.8kn`, the Z8001 `fpedep.8kn`/`biosdefs.z8k` selection, and the
+  target-independent `fpe.sub`). Target development media replace the helper
+  and definitions with the Z8002 selection when required.
   `make cpm8k-src` runs both steps.
 - Verified: `bios.rel`, `cpm.sys`, `cpmldr.sys` all rebuild byte-identical from
   the regenerated tree; `asz8k.pd` is pristine (matches the image).
 
+### Floating-point emulator
+The arithmetic core in `src/fpe/fpe.z8k` is shared. Z8001 and Z8002 use
+separate trap-frame definitions and `fpedep` memory helpers because their call
+frames and memory mappings differ. The normal host build converts the
+target-specific x.out objects checked into `src/fpe/objects`; it does not need
+to bootstrap an emulator to assemble them.
+
+- `make regenerate-fpe` rebuilds both checked-in variants with the original
+  assembler under the matching hosted CPU.
+- `make verify-fpe-objects` reproduces both variants in temporary directories
+  and compares them exactly.
+- `make fpe-regression` builds and runs `FPTEST` on both hosted CPUs.
+- The same Z8002 test executable reports `FPTEST PASS` on the native
+  Z8002-demo MAME machine through its EPU trap, BIOS `MEM_SC`, and MMU path.
+
+The native BIOS must both register `fp_epu` for `EPUTRAP` and distinguish the
+loader's zero-base map-4 request from an FPE nonzero operand mapping. The former
+selects the split-I/D data bank; the latter retains the running program's
+current `_usrdseg`.
+
 ### System generation (sysgen)
-`make system NAME=<name> [LOADER=1] [BIOS=<dir>]` generates Z8001 guest system
-binaries. It does not install a boot sector or create bootable media.
+`make system NAME=<name> [LOADER=1] [BIOS=<dir>]` generates guest system
+binaries for the CPU and system object selected by the BIOS package. It does
+not install a boot sector or create bootable media.
 A **BIOS is a directory under `src/bios/` with a `Makefile`** (the recognition
 contract). `sysgen` runs `make -C src/bios/<name> bios.rel` to build the BIOS
 object, then does the final system link (`scripts/link-cpmsys.sh`:
 `bios.rel` + `cpmsys.rel` + `libcpm.a` -> `cpm.sys` via `ld8k`), plus the
-  optional loader (`scripts/build-cpmldr.sh`), into `build/system/<name>/`.
+  optional loader (`scripts/build-cpmldr.sh`, where supported), into
+  `build/system/<name>/`.
 - BIOS packages are **overlays** on the stock M20 tree (`src/cpm8k`):
   `src/bios/m20` has an empty overlay (pure stock); a custom board copies the
   dir and drops in only its changed `.c`/`.8kn`. The three staging scripts
@@ -574,6 +598,10 @@ object, then does the final system link (`scripts/link-cpmsys.sh`:
   development tree plus the package's BIOS source overlay into logical CP/M
   filesystems. M20 packages declare `m20-floppy-set` and `m20-hd`. This path
   does not run `putboot`, install generated system binaries, or create CHDs.
+- `make dev-z8001` and `make dev-z8002` compose persistent host-backed
+  development drives with the correct FPE, BIOS definitions, and submit files
+  for each CPU. `SUBMIT FPE` is the same recipe in both drives; the staged
+  source selection determines which processor-specific objects it produces.
 
 ### Native lane parked on a branch
 A second bring-up path -- a real-hardware BIOS built with the host `z8k-coff`

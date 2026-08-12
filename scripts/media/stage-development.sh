@@ -4,8 +4,18 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-DEST=${1:?usage: stage-development.sh <destination> [bios-overlay]}
+DEST=${1:?usage: stage-development.sh <destination> [bios-overlay] [cpu-model]}
 BIOS_OVERLAY=${2:-}
+CPU_MODEL=${3:-}
+
+if [ -z "$CPU_MODEL" ] && [ -n "$BIOS_OVERLAY" ] && [ -f "$BIOS_OVERLAY/EMU_MODEL" ]; then
+	CPU_MODEL=$(sed -n '1p' "$BIOS_OVERLAY/EMU_MODEL")
+fi
+: "${CPU_MODEL:=z8001}"
+case "$CPU_MODEL" in
+	z8001|z8002) ;;
+	*) echo "error: unsupported CPU model '$CPU_MODEL'" >&2; exit 2 ;;
+esac
 
 [ -d "$DEST" ] || { echo "error: destination '$DEST' does not exist" >&2; exit 1; }
 
@@ -17,6 +27,20 @@ for file in "$ROOT"/src/cpm8k/*; do
 		*) cp "$file" "$DEST/" ;;
 	esac
 done
+
+# Always replace the regenerated distribution copies with the authoritative
+# maintained FPE sources and the definitions for the selected CPU.
+cp "$ROOT/src/fpe/fpe.z8k" "$DEST/FPE.8KN"
+case "$CPU_MODEL" in
+z8001)
+	cp "$ROOT/src/fpe/fpedep.z8k" "$DEST/FPEDEP.8KN"
+	cp "$ROOT/src/fpe/biosdefs.z8k" "$DEST/BIOSDEFS.Z8K"
+	;;
+z8002)
+	cp "$ROOT/src/fpe/fpedep-z8002.z8k" "$DEST/FPEDEP.8KN"
+	cp "$ROOT/src/fpe/biosdefs-z8002.z8k" "$DEST/BIOSDEFS.Z8K"
+	;;
+esac
 
 # Common assembler and linker sources.  These tools are CP/M-8000 software,
 # not M20 BIOS components.
@@ -51,4 +75,10 @@ if [ -n "$BIOS_OVERLAY" ]; then
 			cp "$file" "$DEST/$base"
 		fi
 	done
+fi
+
+# Z8002-demo uses its monitor boot payload and ATA image builder. The M20
+# loader and putboot recipes are not applicable to that target.
+if [ "$CPU_MODEL" = z8002 ]; then
+	rm -f "$DEST/MAKELDR.SUB" "$DEST/MKPUTBT.SUB"
 fi

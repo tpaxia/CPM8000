@@ -1,9 +1,9 @@
 # Floating-point library sources
 
-The Olivetti M20 (Z8001) has no Z8070 arithmetic coprocessor, so floating point
-is done entirely in **software**. This directory holds the source for that
-library and a build script (`scripts/build-fpe.sh`) that assembles it with the
-in-emulator toolchain (`asz8k` → `xcon`).
+CP/M-8000 can emulate Z8000 extended floating-point instructions in software.
+This directory holds the shared FPE core, its target-dependent support, and a
+build script (`scripts/build-fpe.sh`) that assembles either Z8001 or Z8002
+objects with the in-emulator toolchain (`asz8k` → `xcon`).
 
 ## What the two files are
 
@@ -12,11 +12,12 @@ in-emulator toolchain (`asz8k` → `xcon`).
   `fld`/`fadd`/`fldctl`/… it takes an *extended-instruction trap*, and `fpe`
   decodes the two-word EPA/fpe encoding and emulates the operation. (The
   `epu:` routine is the decoder; per-op handlers are `Fadd:`, `Fld:`, …)
-- **`fpedep.z8k`** — the **system-dependent** half: small helpers
+- **`fpedep.z8k`** and **`fpedep-z8002.z8k`** — system-dependent helpers
   (`gettext`/`getmem`/`putmem`) that map and copy operands between the trapped
   program's address space and the emulator's, using the `MEM_SC` memory-map
   system call.
-- **`biosdefs.z8k`** — the shared definitions both halves `.input`.
+- **`biosdefs.z8k`** and **`biosdefs-z8002.z8k`** — target definitions used
+  while assembling the shared core and the corresponding helper.
 
 ## Source provenance and variants
 
@@ -24,10 +25,10 @@ There is far more than one copy of these sources floating around (the `newos`
 and `bios` trees under `cpm_experiments/`, the M20 distribution binaries in
 `src/cpm8k/`). They differ as follows.
 
-### `fpe.z8k` — one universal version
+### `fpe.z8k` — one parameterized core
 
-The 4283-line EPA-trap emulator is **byte-identical in every tree**
-(md5 `a3cb0e9…`, 101569 bytes). There is no source variation at all.
+The EPA-trap emulator logic is shared. Its saved-frame offsets are derived from
+`co`, which is 4 bytes for a Z8001 call and 2 bytes for a Z8002 call.
 
 The only difference in the *built* `fpe.o` is the `epuwp` work area, which is
 declared entirely with `.block` (reserved, uninitialized). The distribution
@@ -68,14 +69,47 @@ one being the saved trap frame:
 - `nr14` (segmented) vs `cr14` (non-seg) frame-slot naming.
 - `biosdefs2.z8k` adds `co .equ 2` (`call offset, for 8002`).
 
-The M20 is a Z8001, so the distribution built **both** fpe halves against the
-segmented `biosdefs.z8k`. Assembling `fpedep` against `biosdefs2.z8k` gives the
-wrong frame offsets *and* a divergent symbol table.
+The maintained Z8001 helper reconstructs the M20 distribution object. The
+Z8002 helper uses the same memory-copy protocol but its one-word call return
+address shifts the saved-register frame by two bytes. Although the Z8001 FPE
+handler temporarily runs with segmented addressing disabled, Z8001 calls still
+push segmented two-word return addresses; they are not Z8002 call frames.
+
+The hosted Z8002 loader uses banked host storage for its merged logical address
+space. FPE data mappings therefore retain the loader-selected user data bank;
+they must not assume a fixed physical bank.
 
 ## Reproduction status
 
 `fpedep.z8k` here was **transcribed from the distribution `fpedep.o`
-disassembly** (the hand-optimized Z8001 variant above), so against
-`biosdefs.z8k` it reproduces `src/cpm8k/fpedep.o`'s **object content
-byte-for-byte** (only trailing file padding differs). `fpe.z8k` reproduces
-`src/cpm8k/fpe.o` except the uninitialized `epuwp` `.block` scratch noted above.
+disassembly** (the hand-optimized Z8001 variant above). Against
+`biosdefs.z8k`, its machine code and relocations reproduce the distribution
+object; the maintained object also exposes the parameter symbols `co` and
+`pcbase`. `fpe.z8k` likewise reproduces the executable content of
+`src/cpm8k/fpe.o` except for the uninitialized `epuwp` `.block` scratch noted
+above, and carries the same additional parameter symbols.
+
+Run `make fpe-regression` to build and execute the same floating-point test on
+both hosted CPU targets.
+
+The Z8002 object is also validated through the native Z8002-demo BIOS and MAME
+machine. That path requires the BIOS to register `fp_epu` for `EPUTRAP` and to
+preserve the current TPA data bank for nonzero map-4 operand requests. A
+disposable MAME disk containing `FPTEST.Z8K` reports `FPTEST PASS` over the
+machine's serial console.
+
+## Bootstrap objects
+
+`objects/z8001/` and `objects/z8002/` contain the target-specific x.out objects
+used by the normal host build. This keeps `make emu` independent of a running
+CP/M emulator. The objects are generated from the sources in this directory by
+the original assembler running under the matching hosted CPU:
+
+```sh
+make regenerate-fpe       # replace the checked-in objects
+make verify-fpe-objects   # rebuild in temporary directories and compare
+```
+
+The Z8001 and Z8002 objects are intentionally different because their call and
+saved-PC frames differ. Verification assembles each variant under its matching
+hosted CPU, which also catches staging of the wrong target definitions.

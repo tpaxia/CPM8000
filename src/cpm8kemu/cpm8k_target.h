@@ -156,7 +156,7 @@ struct NonSegmentedTarget {
         case 1: tag = (saved_fcw & FCW_S_N) ? 0 : mem.user_code_tag(); break;
         case 2:
         case 3: tag = 0; break;
-        case 4: tag = 0x0200; mem.set_user_data_tag(tag); break;
+        case 4: tag = mem.user_data_tag(); break;
         case 5: tag = mem.user_code_tag(); break;
         }
         cpu.set_reg(6, tag);

@@ -1,0 +1,73 @@
+; Z8002 system-dependent memory and saved-state interface for the FPE.
+
+	.title	"sysdep MODULE"
+	.input	"biosdefs.z8k"
+
+__data	.sect
+	.GLOBAL	stareg,staevnt,stafcw,stapcsg
+stareg	.WORD	co
+staevnt	.WORD	co+32
+stafcw	.WORD	co+34
+stapcsg	.WORD	co+pcbase	; word preceding saved PC
+
+__data	.sect
+gttxt:	.WORD	0
+
+__text	.sect
+	.GLOBAL gettext
+gettext:
+	ld	r5,#5		; trapped program instruction space
+	ldl	rr2,#0
+	sc	#MEM_SC
+	pushl	@r15,rr6	; mapped source
+	ld	r7,#gttxt
+	ld	r5,#0		; system destination
+	ldl	rr2,#0
+	sc	#MEM_SC
+	ldl	rr4,rr6
+	popl	rr6,@r15
+	ldl	rr2,#2
+	sc	#MEM_SC
+	ld	r3,gttxt
+	ldb	rl2,#0
+	ret
+
+	.GLOBAL getmem
+getmem:
+	push	@r15,r3
+	pushl	@r15,rr4
+	ld	r5,#4
+	ldl	rr2,#0
+	sc	#MEM_SC
+	popl	rr4,@r15
+	pushl	@r15,rr6
+	ldl	rr6,rr4
+	ld	r5,#0
+	ldl	rr2,#0
+	sc	#MEM_SC
+	ldl	rr4,rr6
+	popl	rr6,@r15
+	pop	r3,@r15
+	ld	r2,#0
+	sc	#MEM_SC
+	ret
+
+	.GLOBAL putmem
+putmem:
+	push	@r15,r3
+	pushl	@r15,rr4
+	ld	r5,#0
+	ldl	rr2,#0
+	sc	#MEM_SC
+	popl	rr4,@r15
+	pushl	@r15,rr6
+	ldl	rr6,rr4
+	ld	r5,#4
+	ldl	rr2,#0
+	sc	#MEM_SC
+	ldl	rr4,rr6
+	popl	rr6,@r15
+	pop	r3,@r15
+	ld	r2,#0
+	sc	#MEM_SC
+	ret
