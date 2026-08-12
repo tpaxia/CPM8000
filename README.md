@@ -16,25 +16,25 @@ and run it with the complete CP/M-8000 development tree mounted as drive C:
 git clone --recurse-submodules https://github.com/tpaxia/CPM8000.git
 cd CPM8000
 make
-build/emu/cpm8k -M z8001 \
+build/emu/cpm8k-z8001 \
   -d C=dir:src/cpm8k
 ```
 
 The emulator starts at the CP/M `C>` prompt with the original tools, sources,
 headers, libraries, examples, and `.sub` build recipes available. Type `exit`
-to leave it. Build the Z8002 hosted system and select it at run time with:
+to leave it. Run the Z8002 hosted system with:
 
 ```sh
 make bios-emu-z8002 emu
-build/emu/cpm8k -M z8002 \
+build/emu/cpm8k-z8002 \
   -d C=dir:src/cpm8k
 ```
 
 Both modes can mount the same directory-backed development tree or the same
 CP/M filesystem image, but they do not run the same system binary. Before
 starting the emulated CPU, the host loads the matching CPU-specific system:
-`build/bios-emu-z8001/cpm.sys` for `-M z8001` or
-`build/bios-emu-z8002/cpm.sys` for `-M z8002`. These files are not loaded from
+`build/bios-emu-z8001/cpm.sys` for `cpm8k-z8001` or
+`build/bios-emu-z8002/cpm.sys` for `cpm8k-z8002`. These files are not loaded from
 the mounted CP/M drive, so a `CPM.SYS` stored there does not select the running
 system.
 
@@ -168,7 +168,7 @@ git submodule update --init --recursive
 ### Building
 
 ```sh
-make                       # Z8001 hosted BIOS and emulator (default)
+make                       # both hosted CPUs and their thin BIOSes
 make bios-emu-z8001 emu    # explicit Z8001 build
 make bios-emu-z8002 emu    # also build the Z8002 hosted system
 ```
@@ -177,7 +177,8 @@ make bios-emu-z8002 emu    # also build the Z8002 hosted system
 
 The build first creates `xarch` and `xout2coff`, converts `libcpm.a` and the
 selected CCP/BDOS object, links the matching thin hosted BIOS, and builds
-`build/emu/cpm8k` with CMake.
+the `build/emu/cpm8k-z8001` and `build/emu/cpm8k-z8002` executables with CMake.
+There is no mode-neutral executable: the name always identifies the CPU model.
 
 ### Running Z8001 and Z8002
 
@@ -185,13 +186,13 @@ At least one drive must be configured:
 
 ```sh
 # Hosted Z8001 (the default)
-build/emu/cpm8k -M z8001 -d C=dir:src/cpm8k
+build/emu/cpm8k-z8001 -d C=dir:src/cpm8k
 
 # Hosted Z8002 using the same files
-build/emu/cpm8k -M z8002 -d C=dir:src/cpm8k
+build/emu/cpm8k-z8002 -d C=dir:src/cpm8k
 
 # Native CP/M filesystem image
-build/emu/cpm8k -M z8002 \
+build/emu/cpm8k-z8002 \
   -d A=img:distribution/CPM_8000_1.1/REL11A.IMG
 ```
 
@@ -200,14 +201,19 @@ The smallest configured letter becomes the initial default drive.  A
 directory-backed drive routes file operations to the host; an image-backed
 drive runs the native BDOS and BIOS sector path.
 
-The emulator selects its host-loaded system from `-M`.  A guest `CPM.SYS`
-created by a submit file or visible on a mapped drive is only a guest file and
-does not replace the running hosted system.
+The executable selects its matching host-loaded system at build time. A guest
+`CPM.SYS` created by a submit file or visible on a mapped drive is only a guest
+file and does not replace the running hosted system. Before the CP/M sign-on,
+the hosted emulator also prints the active CPU mode.
 
 The Z8001 and Z8002 implementations have been validated by running the same
 ten submit pipelines (`ASZ8K`, `LD8K`, `FPE`, `BIOS`, `CPMSYS`, `LINKSYS`,
 `MAKELDR`, `MKPUTBT`, `WUMP`, and `TICTAC`) and comparing every resulting file
-byte-for-byte.
+byte-for-byte. `make submit-regression` repeats this validation for both CPUs
+and checks the resulting binaries against `tests/submit-regression.sha256`.
+That manifest was recorded with the pre-refactor Z8001 emulator at commit
+`075c8e9`. Recording a replacement requires both `--record` and an explicit
+known-good executable in `CPM8K_EMU`; a normal test never accepts new hashes.
 
 ## System generation and development media
 

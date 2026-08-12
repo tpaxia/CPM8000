@@ -17,7 +17,7 @@ BUILDDIR = build
 XARCH = $(BUILDDIR)/tools/xarch
 XOUT2COFF = $(BUILDDIR)/tools/xout2coff
 LIBDIR = $(BUILDDIR)/lib
-.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats z8002-demo-image
+.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats z8002-demo-image submit-regression submit-regression-z8001 submit-regression-z8002
 
 all: emu
 
@@ -94,9 +94,17 @@ bios-emu-z8002: lib $(LIBDIR)/cpmsys2.o
 	$(MAKE) -C src/cpm8kemu/bios-z8002 BUILDDIR=$(abspath $(BUILDDIR)/bios-emu-z8002) LIBDIR=$(abspath $(LIBDIR))
 
 # --- Build emulator host program (cross-platform CMake build) ---
-emu: bios-emu-z8001
+emu: bios-emu-z8001 bios-emu-z8002
 	cmake -S . -B $(BUILDDIR)/emu -DCMAKE_BUILD_TYPE=Release
 	cmake --build $(BUILDDIR)/emu
+
+submit-regression: submit-regression-z8001 submit-regression-z8002
+
+submit-regression-z8001: emu
+	scripts/test-submit-regression.sh z8001
+
+submit-regression-z8002: emu
+	scripts/test-submit-regression.sh z8002
 
 clean:
 	rm -rf $(BUILDDIR)

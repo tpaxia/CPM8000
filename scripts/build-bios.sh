@@ -14,8 +14,8 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-EMU=build/emu/cpm8k
 EMU_MODEL=${EMU_MODEL:-z8001}
+EMU=build/emu/cpm8k-$EMU_MODEL
 SRC=${SRC:-src/cpm8k}
 SUB=scripts/bios.sub
 OUT=${1:-build/bios-src}
@@ -61,7 +61,7 @@ cp "$SUB" "$DRIVE/BIOS.SUB"
 
 echo "building (drive C: -> $DRIVE) ..."
 echo "----------------------------------------------------------------------"
-printf 'SUBMIT BIOS\n' | "$EMU" -M "$EMU_MODEL" -d C=dir:"$DRIVE" 2>/dev/null \
+printf 'SUBMIT BIOS\n' | "$EMU" -d C=dir:"$DRIVE" 2>/dev/null \
 	| LC_ALL=C tr -cd '\11\12\40-\176' | grep -v '^[[:space:]]*$' || true
 echo "----------------------------------------------------------------------"
 

@@ -26,14 +26,15 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-EMU=build/emu/cpm8k
+EMU_MODEL=${EMU_MODEL:-z8001}
+EMU=build/emu/cpm8k-$EMU_MODEL
 SRC=src/cpm8k
 FSRC=src/fpe
 SUB=scripts/fpe.sub
 OUT=${1:-build/fpe}
 
 [ -x "$EMU" ] || { echo "error: $EMU not built -- run 'make emu' first" >&2; exit 1; }
-[ -f build/bios-emu-z8001/cpm.sys ] || { echo "error: build/bios-emu-z8001/cpm.sys missing -- run 'make bios-emu-z8001' first" >&2; exit 1; }
+[ -f build/bios-emu-$EMU_MODEL/cpm.sys ] || { echo "error: build/bios-emu-$EMU_MODEL/cpm.sys missing -- run 'make bios-emu-$EMU_MODEL' first" >&2; exit 1; }
 
 DRIVE=$(mktemp -d "${TMPDIR:-/tmp}/cpm8k-fpe.XXXXXX")
 trap 'rm -rf "$DRIVE"' EXIT INT TERM

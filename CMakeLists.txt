@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.16)
 project(cpm8000_emu LANGUAGES CXX)
 
-# Cross-platform build for the hosted CP/M-8000 emulator (the `cpm8k` host
-# program). The CP/M-8000 toolchain, BIOS assembly, and system generation are
+# Cross-platform build for the hosted CP/M-8000 emulators. The CP/M-8000
+# toolchain, BIOS assembly, and system generation are
 # driven by the top-level Makefile (they run the guest DR/Zilog tools inside the
 # emulator); this CMake build produces only the C++ emulator itself.
 #
 #   cmake -S . -B build/emu -DCMAKE_BUILD_TYPE=Release
-#   cmake --build build/emu                 # -> build/emu/cpm8k
+#   cmake --build build/emu
 #
 # `make emu` drives this under the hood. Portable across Linux and macOS; the
 # console/file layers use POSIX (termios/unistd/select), so a Windows port would
@@ -27,7 +27,7 @@ set(BUILD_TOOLS  OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTS  OFF CACHE BOOL "" FORCE)
 add_subdirectory(z8000_emu)
 
-add_executable(cpm8k
+set(CPM8K_EMULATOR_SOURCES
   src/cpm8kemu/main.cpp
   src/cpm8kemu/cpm8k_bdos.cpp
   src/cpm8kemu/cpm8k_bios.cpp
@@ -36,15 +36,20 @@ add_executable(cpm8k
   src/cpm8kemu/cpm8k_drives.cpp
 )
 
-# Linking z8000 brings its PUBLIC include dir (lib/include) so <z8000/...>
-# resolves; add lib/include/z8000 so the emulator's `#include "z8000.h"` does too.
-target_include_directories(cpm8k PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/z8000_emu/lib/include/z8000
-)
-target_link_libraries(cpm8k PRIVATE z8000)
+function(add_cpm8k_emulator target mode)
+  add_executable(${target} ${CPM8K_EMULATOR_SOURCES})
+  target_compile_definitions(${target} PRIVATE ${mode})
+  target_include_directories(${target} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/z8000_emu/lib/include/z8000
+  )
+  target_link_libraries(${target} PRIVATE z8000)
 
-if(MSVC)
-  target_compile_options(cpm8k PRIVATE /W3)
-else()
-  target_compile_options(cpm8k PRIVATE -Wall -Wextra)
-endif()
+  if(MSVC)
+    target_compile_options(${target} PRIVATE /W3)
+  else()
+    target_compile_options(${target} PRIVATE -Wall -Wextra)
+  endif()
+endfunction()
+
+add_cpm8k_emulator(cpm8k-z8001 CPM8K_SEGMENTED)
+add_cpm8k_emulator(cpm8k-z8002 CPM8K_NONSEGMENTED)
