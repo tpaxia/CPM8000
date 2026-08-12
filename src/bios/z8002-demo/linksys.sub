@@ -1,0 +1,2 @@
+; relink Z8002-demo with the non-segmented CCP+BDOS
+ld8k -w -o cpm.sys bios.rel cpmsys2.rel -lcpm

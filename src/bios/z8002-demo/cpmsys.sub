@@ -1,0 +1,5 @@
+; build Z8002-demo cpm.sys with the non-segmented CCP+BDOS
+zcc -c -M1 bios.c
+asz8k -o biosasm.o biosasm.8kn
+ld8k -o bios.rel -r biosasm.o bios.o fpedep.o fpe.o
+ld8k -w -o cpm.sys bios.rel cpmsys2.rel -lcpm

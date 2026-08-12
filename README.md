@@ -264,7 +264,8 @@ make -C src/bios/<name> bios.rel BUILDDIR=<directory>
 
 The package is a source overlay: distribution BIOS sources are staged from
 `src/cpm8k`, then any `.c` or `.8kn` files in the package replace or extend
-them. The package's `CPMSYS` and `EMU_MODEL` metadata select the system object
+them. Development media also apply package `.sub` overrides for target-specific
+links. The package's `CPMSYS` and `EMU_MODEL` metadata select the system object
 and hosted CPU. The [BIOS package guide](src/bios/README.md) describes the
 stock `m20` package and the `m20-serial` variant; the
 [`z8002-demo` package](src/bios/z8002-demo/README.md) documents its native MMU,
@@ -274,9 +275,9 @@ console, ATA, and boot contract. A target can also provide a
 ### Logical development media
 
 Development media contain the common CP/M-8000 tools, sources, headers,
-libraries, examples, and self-contained submit files.  A target package adds
-only its BIOS source overlay and declares compatible filesystem formats through
-its `media-formats` Make target.
+libraries, examples, and self-contained submit files. A target package adds
+its BIOS source and submit overrides and declares compatible filesystem formats
+through its `media-formats` Make target.
 
 List formats for the M20 package:
 

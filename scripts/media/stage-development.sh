@@ -41,12 +41,14 @@ for name in asz8k ld8k fpe bios cpmsys makeldr mkputbt wump tictac; do
 done
 cp "$ROOT/scripts/linkcpmsys.sub" "$DEST/LINKSYS.SUB"
 
-# A target package may replace or add BIOS source files.  It does not own the
-# compiler, assembler, linker, or the other common development content.
+# A target package may replace or add BIOS source files and target-specific
+# submit recipes.  It does not own the compiler, assembler, linker, or the
+# other common development content.
 if [ -n "$BIOS_OVERLAY" ]; then
-	for file in "$BIOS_OVERLAY"/*.c "$BIOS_OVERLAY"/*.8kn; do
+	for file in "$BIOS_OVERLAY"/*.c "$BIOS_OVERLAY"/*.8kn "$BIOS_OVERLAY"/*.sub; do
 		if [ -f "$file" ]; then
-			cp "$file" "$DEST/"
+			base=$(basename "$file" | tr 'a-z' 'A-Z')
+			cp "$file" "$DEST/$base"
 		fi
 	done
 fi

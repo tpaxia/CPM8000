@@ -2,8 +2,9 @@
 
 The directories below this one are source-overlay packages used by `sysgen`.
 The build first stages the common M20 CP/M-8000 BIOS sources from `src/cpm8k`,
-then applies the selected package's `.c` and `.8kn` files.  A package therefore
-contains only the files that differ from the common source tree.
+then applies the selected package's `.c` and `.8kn` files. Development-media
+staging also applies package `.sub` overrides. A package therefore contains
+only the files and target-specific recipes that differ from the common tree.
 
 The current packages are:
 

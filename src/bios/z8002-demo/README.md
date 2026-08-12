@@ -10,6 +10,17 @@ build under the hosted Z8002 emulator.  Its Memory Region Table uses the
 representation expected by that binary: bank 1 is `0x01000000`, bank 2 is
 `0x02000000`, and bank 3 is `0x03000000`.
 
+Its `CPMSYS.SUB` and `LINKSYS.SUB` overrides also select `cpmsys2.rel`, so the
+same submit commands can be validated on hosted Z8002 CP/M and on the native
+FPGA/MAME disk without accidentally rebuilding a segmented Z8001 system.
+
+The complete development submit suite has been run from a clean disk under
+MAME: `ASZ8K`, `LD8K`, `FPE`, `BIOS`, `CPMSYS`, `LINKSYS`, `WUMP`, and
+`TICTAC` all complete successfully. The resulting filesystem passes
+`fsck.cpm`; generated tools, objects, applications, `bios.rel`, and `cpm.sys`
+match the corresponding canonical builds. `FPE.O` is the original logical
+object with CP/M record padding in its final byte.
+
 Build the system and the complete 8 MiB development disk with:
 
 ```sh
