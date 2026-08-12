@@ -109,7 +109,7 @@ replaces:
 | `fpe.8kn` | Maintained software floating-point emulator source |
 | `fpedep.8kn` | Reconstructed Z8001/M20-dependent FPE support |
 | `biosdefs.z8k` | Segmented Z8001 trap-frame definitions used by FPE |
-| `fpe.sub` | In-guest FPE rebuild recipe |
+| `fpe.sub` | Target-selected in-guest FPE rebuild recipe |
 
 The overlay is reproducible from `src/linker`, `src/fpe`, and `scripts/fpe.sub`.
 The hosted systems use the shared FPE core with separate Z8001 and Z8002
@@ -362,18 +362,21 @@ scripts/build-ld8k.sh
 ### Floating-point emulator
 
 `src/fpe/fpe.z8k` implements the EPA extended-instruction trap emulator.
-`fpedep.z8k` supplies system-dependent memory and trap-frame operations.  The
-current dependent half reproduces the segmented Z8001/M20 object; it is not yet
-the Z8002 adaptation.
+The shared core is assembled with target-specific definitions and dependent
+helpers: `fpedep.z8k` for the segmented Z8001/M20 frame and
+`fpedep-z8002.z8k` for the non-segmented Z8002 frame and memory mapping.
+Both adaptations are implemented and validated.
 
 ```sh
-scripts/build-fpe.sh
+scripts/build-fpe.sh z8001
+scripts/build-fpe.sh z8002
 ```
 
-The reconstructed `fpedep.o` content matches the distribution object.  The
-rebuilt `fpe.o` differs only in an uninitialized `.block` work area that the
-emulator initializes at runtime.  See [`src/fpe/README.md`](src/fpe/README.md)
-for provenance and variant analysis.
+`SUBMIT FPE` uses the sources and definitions staged for its development drive,
+so the same submit recipe produces the matching target objects. The checked-in
+Z8001 and Z8002 objects reproduce exactly when rebuilt with the original guest
+assembler. See [`src/fpe/README.md`](src/fpe/README.md) for provenance and
+variant analysis.
 
 ### Further implementation notes
 
