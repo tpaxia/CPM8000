@@ -2,7 +2,7 @@
 ;*** The gettext/getmem/putmem bodies here were transcribed from the
 ;*** distribution fpedep.o disassembly (the hand-optimized variant that
 ;*** uses ldk/xor/clrb); with biosdefs.z8k this reproduces the object
-;*** content byte-for-byte. Assemble with asz8k -> xcon.
+;*** machine code and relocations. Assemble with asz8k, which chains to xcon.
 ;*************************************************
 ;** Change history --
 ;** 30mar81: Broken off from general interface.

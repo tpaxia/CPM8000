@@ -6,7 +6,7 @@
 # fpe.z8k is the shared Z8000 EPA extended-instruction trap handler. Each target
 # supplies its own saved-frame definitions and memory helper. The sources are
 # assembled with the distribution asz8k, whose V1.1B syntax supports the FP
-# instructions, and then converted by xcon.
+# instructions. ASZ8K chains to XCON as its implicit second pass.
 #
 # NOTE on reproduction vs the distribution objects:
 #  - fpe.o has equivalent executable content. Its epuwp work area is declared
@@ -51,7 +51,7 @@ echo "staging build inputs into temp drive: $DRIVE"
 cp "$FSRC/fpe.z8k"    "$DRIVE/fpe.8kn"
 cp "$FSRC/$FPEDEP" "$DRIVE/fpedep.8kn"
 cp "$FSRC/$BIOSDEFS" "$DRIVE/biosdefs.z8k"
-# assembler + converter + predef (distribution asz8k, which supports the FP ops)
+# assembler + converter + predef (distribution asz8k supports the FP ops)
 cp "$SRC/asz8k.z8k" "$DRIVE/ASZ8K.Z8K"
 cp "$SRC/xcon.z8k"  "$DRIVE/"
 cp "$SRC/asz8k.pd"  "$DRIVE/asz8k.pd"

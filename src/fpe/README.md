@@ -3,9 +3,11 @@
 CP/M-8000 can emulate Z8000 extended floating-point instructions in software.
 This directory holds the shared FPE core, its target-dependent support, and a
 build script (`scripts/build-fpe.sh`) that assembles either Z8001 or Z8002
-objects with the in-emulator toolchain (`asz8k` → `xcon`).
+x.out objects with the original in-guest toolchain. `ASZ8K` invokes `XCON` as
+an implicit second pass, so both programs are staged even though `fpe.sub`
+names only `ASZ8K`.
 
-## What the two files are
+## Files
 
 - **`fpe.z8k`** — the emulator itself. It is the trap handler for the Z8000
   **EPA extended (floating-point) instructions**: when a program executes an
@@ -19,55 +21,35 @@ objects with the in-emulator toolchain (`asz8k` → `xcon`).
 - **`biosdefs.z8k`** and **`biosdefs-z8002.z8k`** — target definitions used
   while assembling the shared core and the corresponding helper.
 
-## Source provenance and variants
+## Target variants
 
-There is far more than one copy of these sources floating around (the `newos`
-and `bios` trees under `cpm_experiments/`, the M20 distribution binaries in
-`src/cpm8k/`). They differ as follows.
-
-### `fpe.z8k` — one parameterized core
+### Shared core
 
 The EPA-trap emulator logic is shared. Its saved-frame offsets are derived from
 `co`, which is 4 bytes for a Z8001 call and 2 bytes for a Z8002 call.
 
-The only difference in the *built* `fpe.o` is the `epuwp` work area, which is
-declared entirely with `.block` (reserved, uninitialized). The distribution
-binary happens to hold leftover buffer garbage there; a clean build emits
-zeros. No relocations touch that region and the emulator overwrites it at
-startup, so the two are functionally identical.
+When comparing the maintained **Z8001** build with the original M20 Z8001
+`src/cpm8k/fpe.o`, the only executable-content difference is the `epuwp` work
+area, which is declared entirely with `.block` (reserved, uninitialized). The
+distribution object happens to hold leftover buffer data there; a clean build
+emits zeros. No relocations touch that region and the emulator overwrites it at
+startup. The Z8002 object is separately built and intentionally differs because
+it uses the Z8002 frame constants described below.
 
-### `fpedep.z8k` — three real variants
+### Target-dependent support
 
-This is where all the divergence lives. The variants differ along three axes —
-target CPU / include, instruction encoding, and which memory maps they perform:
-
-| axis | `newos` (3654 B) | `bios` (3563 B) | **M20 distribution** (`src/fpe`) |
-|------|------------------|-----------------|----------------------------------|
-| **Target / include** | Z8002 — `biosdefs2.z8k` | Z8002 — `biosdefs2.z8k` | **Z8001 — `biosdefs.z8k`** |
-| **Encoding** | `ld r5,#N` / `ldl rr2,#0` (unoptimized) | same | **`ldk r5,#N` / `xor r2,r2` / `clrb`** (optimized) |
-| **`MEM_SC` map blocks** | both active (8 `sc`) | **2 commented out** (6 `sc`) | active, M20 layout (`gettext` has an extra `r5=#5` map) |
-| **Map parameters** | `r5=#4` (TPA data) | note `r5=#2` (system data) | `r5=#5`/`#4`/`#0` (M20-specific) |
-
-- **`newos`** and **`bios`** are the same lineage (Z8002, unoptimized `ld`/`ldl`),
-  differing only in that `bios` **comments out two `MEM_SC` map calls** — a board
-  where those maps aren't needed.
-- The **M20 distribution** `fpedep` is a *separate, hand-optimized Z8001*
-  version. It uses the short `ldk`/`xor`/`clrb` encodings, keeps all the maps
-  (with the extra one in `gettext`), and — decisively — is built against the
-  **segmented `biosdefs.z8k`**.
-
-### Why `biosdefs.z8k`, not `biosdefs2.z8k`
-
-`biosdefs.z8k` is the **Z8001 (segmented)** definitions; `biosdefs2.z8k` is the
-**Z8002 (non-segmented)** variant. They differ in four things, the substantive
-one being the saved trap frame:
+`fpedep.z8k` and `biosdefs.z8k` implement the segmented Z8001/M20 selection.
+`fpedep-z8002.z8k` and `biosdefs-z8002.z8k` implement the non-segmented Z8002
+selection. The substantive differences are:
 
 - **`scseg`** — on the segmented Z8001 the frame carries a **PC-segment word**,
   so `biosdefs.z8k` inserts `scseg` (`caller PC SEG`) between `scfcw` and
   `scpc`; the frame is one word larger and every offset past it shifts.
-  `biosdefs2.z8k` (non-segmented) drops it.
+  `biosdefs-z8002.z8k` (non-segmented) drops it.
 - `nr14` (segmented) vs `cr14` (non-seg) frame-slot naming.
-- `biosdefs2.z8k` adds `co .equ 2` (`call offset, for 8002`).
+- The call-return offset `co` is 4 for Z8001 and 2 for Z8002.
+- The helpers select the `MEM_SC` address spaces appropriate to each target's
+  memory model.
 
 The maintained Z8001 helper reconstructs the M20 distribution object. The
 Z8002 helper uses the same memory-copy protocol but its one-word call return
@@ -79,10 +61,11 @@ The hosted Z8002 loader uses banked host storage for its merged logical address
 space. FPE data mappings therefore retain the loader-selected user data bank;
 they must not assume a fixed physical bank.
 
-## Reproduction status
+## Provenance and reproduction
 
-`fpedep.z8k` here was **transcribed from the distribution `fpedep.o`
-disassembly** (the hand-optimized Z8001 variant above). Against
+The original M20 distribution objects are retained as `src/cpm8k/fpe.o` and
+`src/cpm8k/fpedep.o`. The maintained Z8001 `fpedep.z8k` was transcribed from
+the distribution `fpedep.o` disassembly. Against
 `biosdefs.z8k`, its machine code and relocations reproduce the distribution
 object; the maintained object also exposes the parameter symbols `co` and
 `pcbase`. `fpe.z8k` likewise reproduces the executable content of
@@ -111,5 +94,7 @@ make verify-fpe-objects   # rebuild in temporary directories and compare
 ```
 
 The Z8001 and Z8002 objects are intentionally different because their call and
-saved-PC frames differ. Verification assembles each variant under its matching
-hosted CPU, which also catches staging of the wrong target definitions.
+saved-PC frames differ. `SUBMIT FPE` is common to both targets; the selected
+development drive supplies the matching helper and definitions. Verification
+assembles each variant under its matching hosted CPU, which also catches
+staging of the wrong target definitions.
