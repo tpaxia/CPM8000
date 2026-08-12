@@ -17,7 +17,8 @@ BUILDDIR = build
 XARCH = $(BUILDDIR)/tools/xarch
 XOUT2COFF = $(BUILDDIR)/tools/xout2coff
 LIBDIR = $(BUILDDIR)/lib
-.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats z8002-demo-image submit-regression submit-regression-z8001 submit-regression-z8002
+FPE_Z8001_DIR = $(BUILDDIR)/fpe-z8001
+.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats z8002-demo-image submit-regression submit-regression-z8001 submit-regression-z8002 fpe-regression fpe-regression-z8001
 
 all: emu
 
@@ -79,6 +80,11 @@ $(LIBDIR)/cpmsys2.o: $(XOUT2COFF)
 	cp $(SRCDIR)/cpmsys2.rel $(LIBDIR)/cpmsys2.rel
 	cd $(LIBDIR) && $(abspath $(XOUT2COFF)) cpmsys2.rel
 
+$(FPE_Z8001_DIR)/%.o: $(SRCDIR)/%.o $(XOUT2COFF)
+	mkdir -p $(FPE_Z8001_DIR)
+	cp $< $(FPE_Z8001_DIR)/$*.rel
+	cd $(FPE_Z8001_DIR) && $(abspath $(XOUT2COFF)) $*.rel
+
 $(LIBDIR)/libcpm.a: $(LIBDIR)/.done
 	$(AR) rcs $@ $(LIBDIR)/*.o
 
@@ -87,8 +93,8 @@ lib: $(LIBDIR)/libcpm.a $(LIBDIR)/cpmsys.o
 # --- Build thin BIOSes for emulator ---
 bios-emu: bios-emu-z8001
 
-bios-emu-z8001: lib
-	$(MAKE) -C src/cpm8kemu/bios-z8001 BUILDDIR=$(abspath $(BUILDDIR)/bios-emu-z8001) LIBDIR=$(abspath $(LIBDIR))
+bios-emu-z8001: lib $(FPE_Z8001_DIR)/fpe.o $(FPE_Z8001_DIR)/fpedep.o
+	$(MAKE) -C src/cpm8kemu/bios-z8001 BUILDDIR=$(abspath $(BUILDDIR)/bios-emu-z8001) LIBDIR=$(abspath $(LIBDIR)) FPEDIR=$(abspath $(FPE_Z8001_DIR))
 
 bios-emu-z8002: lib $(LIBDIR)/cpmsys2.o
 	$(MAKE) -C src/cpm8kemu/bios-z8002 BUILDDIR=$(abspath $(BUILDDIR)/bios-emu-z8002) LIBDIR=$(abspath $(LIBDIR))
@@ -105,6 +111,11 @@ submit-regression-z8001: emu
 
 submit-regression-z8002: emu
 	scripts/test-submit-regression.sh z8002
+
+fpe-regression: fpe-regression-z8001
+
+fpe-regression-z8001: emu
+	scripts/test-fpe.sh z8001
 
 clean:
 	rm -rf $(BUILDDIR)

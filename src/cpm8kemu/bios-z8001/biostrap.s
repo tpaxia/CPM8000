@@ -232,11 +232,6 @@ _map_adr:
 	sc	#MEM_SC
 	ret
 
-! FPE handler stub
-	.global fp_epu
-fp_epu:
-	ret
-
 ! PSA entry sizes
 	.equ	ps, 8
 	.equ	psa_epu, 1 * ps
