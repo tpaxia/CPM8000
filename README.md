@@ -3,8 +3,8 @@
 CPM8000 combines the original Digital Research/Zilog CP/M-8000 software with a
 hosted Z8000 emulator, reproducible source reconstruction, the original guest
 toolchain, target-oriented system generation, and logical CP/M media creation.
-The Olivetti M20 is the reference Z8001 target, the Z8002-demo FPGA/MAME
-machine is the native non-segmented target, and the hosted environment can
+The Olivetti M20 is the reference Z8001 target, the MAME Z8002-demo machine is
+the native non-segmented target, and the hosted environment can
 execute both Z8001 and Z8002 CP/M.
 
 ## Quick start
@@ -26,16 +26,17 @@ headers, libraries, examples, and `.sub` build recipes available.  Type `exit`
 to leave it.  Z8001 is the default hosted CPU, but `-M z8001` is shown
 explicitly here.
 
-Build the native Z8002-demo system and its shared FPGA/MAME hard-disk image:
+Build the native Z8002-demo system and its MAME hard-disk image:
 
 ```sh
 make z8002-demo-image
 ```
 
 This creates `z8002-demo.raw` and an uncompressed `z8002-demo.chd` under
-`build/media/z8002-demo/z8002-demo-hd/`. The raw image is consumed directly by
-the FPGA monitor; MAME uses the CHD wrapper. Both contain the same 64 KiB
-system prefix and CP/M filesystem.
+`build/media/z8002-demo/z8002-demo-hd/`. MAME uses the CHD; the raw image is
+available to compatible physical implementations. Both contain the same 64
+KiB system prefix and CP/M filesystem. The checked-in monitor is copied to
+`build/roms/z8002demo/z8kmon.bin`; launch MAME with `-rompath build/roms`.
 
 ## Overview
 

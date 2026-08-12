@@ -1,11 +1,9 @@
-;************ biosio.8kn -- Z8002-demo FPGA machine ****************
+;************ biosio.8kn -- Z8002-demo machine *********************
 ;*
 ;*	Low-level I/O for the CP/M-8000(tm) BIOS on the Z8002 machine.
 ;*	Replaces the Olivetti-M20 PROM interface (disk_io/crt_put/cold_boot)
-;*	with this board's hardware: KFMMC IDE disk, Z80-SIO console.
+;*	with the machine's generic ATA disk and Z80-SIO console.
 ;*	Non-segmented (Z8002).  Ported from z8002-bios/ide.s + sio.s.
-;*
-;*	See ../../../../Z8000_FPGA/z8000_examples/Z8002-demo/HARDWARE.md
 ;*
 
 __text:	.sect
@@ -189,7 +187,7 @@ cp_wait:
 ;****************************************************
 ;*
 ;* cold_boot() -- machine cold start.  The monitor has already loaded the
-;* system into bank 0 and set the MMU; here we just make sure the IDE is
+;* system into bank 0 and set the MMU; here we just make sure the ATA disk is
 ;* ready.  (Serial is initialised by serinit() in bios.c.)
 ;*
 ;****************************************************

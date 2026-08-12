@@ -1,9 +1,11 @@
 # Z8002-demo BIOS
 
-This package builds CP/M-8000 for the non-segmented Z8002 FPGA machine in
-`Z8000_FPGA/z8000_examples/cpm8000_z8002`.  It uses Z80-SIO channel B for the
-console, the KFMMC ATA task-file interface for disk I/O, and the board's
-system/normal banking MMU for CP/M's SC #1 memory services.
+This package builds CP/M-8000 for the non-segmented Z8002-demo machine emulated
+by MAME. It uses Z80-SIO channel B for the console, a generic ATA task-file
+interface for disk I/O, and a system/normal banking MMU for CP/M's SC #1 memory
+services. A compatible physical implementation exists in
+`Z8000_FPGA/z8000_examples/cpm8000_z8002`; it realizes the ATA interface with
+KFMMC but does not change the BIOS-visible machine contract.
 
 The package selects the original non-segmented `cpmsys2.rel` and runs its guest
 build under the hosted Z8002 emulator.  Its Memory Region Table uses the
@@ -11,8 +13,8 @@ representation expected by that binary: bank 1 is `0x01000000`, bank 2 is
 `0x02000000`, and bank 3 is `0x03000000`.
 
 Its `CPMSYS.SUB` and `LINKSYS.SUB` overrides also select `cpmsys2.rel`, so the
-same submit commands can be validated on hosted Z8002 CP/M and on the native
-FPGA/MAME disk without accidentally rebuilding a segmented Z8001 system.
+same submit commands can be validated on hosted Z8002 CP/M and on the MAME
+machine without accidentally rebuilding a segmented Z8001 system.
 
 The complete development submit suite has been run from a clean disk under
 MAME: `ASZ8K`, `LD8K`, `FPE`, `BIOS`, `CPMSYS`, `LINKSYS`, `WUMP`, and
@@ -31,8 +33,9 @@ make z8002-demo-image
 The first 128 sectors of the disk hold a padded 64 KiB flat system image.  The
 CP/M filesystem begins at LBA 128 and occupies the rest of the disk.
 
-The boot monitor is maintained only in
-`Z8000_FPGA/z8000_examples/cpm8000_z8002/z8002-bios`; it is not copied into
-this repository. The FPGA consumes `z8002-demo.raw` directly, while MAME uses
-the CHD wrapper around the same image and identifies the external monitor ROM
-by its checksum.
+The validated monitor is included as `z8kmon.bin`, making the BIOS package
+self-contained. System generation copies it to
+`build/roms/z8002demo/z8kmon.bin`, the ROM-set layout expected by MAME. The
+monitor source remains with the compatible physical implementation under
+`Z8000_FPGA/z8000_examples/cpm8000_z8002/z8002-bios`. MAME consumes the CHD;
+the physical implementation can consume the corresponding raw image.

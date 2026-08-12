@@ -1,9 +1,10 @@
 # Z8002 CP/M-8000 BIOS — Banking TPA support
 
 How this BIOS runs transient programs (PIP, STAT, ED, user `.z8k` files) on the
-**Z8002-demo** FPGA machine's banking MMU (`~/Projects/Z8000_FPGA/z8000_examples/Z8002-demo/src/mmu.v`,
-`MEMORY_MODEL.md`). Read this before changing the MMU or this BIOS — several
-pieces here only make sense together.
+**Z8002-demo** banking MMU. MAME is the primary machine implementation; the
+compatible physical implementation and its RTL are documented under
+`Z8000_FPGA/z8000_examples/cpm8000_z8002`. Read this before changing the MMU or
+this BIOS—several pieces here only make sense together.
 
 ## The two-tier memory model (recap)
 

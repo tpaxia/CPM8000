@@ -266,7 +266,7 @@ _mem_mov:
 ;****************************************************
 ;*	map_wdw(physchunk) -- C callable.  Window a physical 16 KB chunk into
 ;*	the C3 aperture (logical 0xC000-0xFFFF) so the OS (system mode) can
-;*	reach a TPA bank.  Targets the Z8002-demo banking MMU (src/mmu.v):
+;*	reach a TPA bank.  Targets the Z8002-demo banking MMU:
 ;*
 ;*	    SAP0  (special-I/O 0xFFE4) = physchunk
 ;*	    SSEL  (special-I/O 0xFFE3) = 0x08  (C3 = B aperture; C0-C2 = A)
@@ -310,7 +310,6 @@ _psap:	 .block 2	;program status area ptr
 
 ;****************************************************
 ;****************************************************
-
 
 
 
