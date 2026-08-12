@@ -148,7 +148,9 @@ src/media/<format>/    logical CP/M filesystem format descriptors
 The hosted emulator is a CP/M build and validation environment.  It emulates
 the Z8000 CPU and CP/M trap ABI, while host services provide console, files,
 and disk-image sector I/O.  It is distinct from a complete M20 hardware
-emulator.
+emulator.  The [hosted-emulator architecture](src/cpm8kemu/ARCHITECTURE.md)
+describes how the shared implementation handles Z8001 segmented and Z8002
+non-segmented execution, SC frames, address translation, and TPA allocation.
 
 ### Prerequisites
 
