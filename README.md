@@ -94,6 +94,44 @@ media generation.
 The six images under `distribution/CPM_8000_1.1/` are the ground truth for
 `src/cpm8k`.  Regeneration has two explicit stages:
 
+#### Archive provenance
+
+The original CP/M-8000 material is preserved by
+[The Unofficial CP/M Web Site](https://www.cpm.z80.de/).  Steve Williams, a
+Digital Research engineer and R&D project manager, saved an archive of Digital
+Research development tapes and later left that archive with Al Kossow.  The
+CP/M-8000 material from that collection was subsequently published through the
+Unofficial CP/M archive at `cpm.z80.de`.  This custody history is distinct from
+the maintained changes made in this repository.
+
+The project uses or cross-checks the following upstream archives:
+
+| Archive | Role in this project | SHA-256 |
+|---------|----------------------|--------|
+| [`rel11.zip`](https://www.cpm.z80.de/download/rel11.zip) | Primary Olivetti M20 CP/M-8000 1.1 media: `REL11A`, `REL11B`, `REL11C`, `GAMES`, `MISC11`, and `TEXT11` | `0d25fdf1a35a09ba320d1dcbb5fe36e981e65055cdb4a1170567b6fc0e961acc` |
+| [`8k0583.zip`](https://www.cpm.z80.de/download/8k0583.zip) | Primary surviving source collection for the assembler, linker, FPE, BIOS, BDOS, CCP, utilities, and documentation | `0e9ad74b70b1fdf0b449830bb0ac234c4a695defc95283d19970d58967cfa2c4` |
+| [`cpm8k11.zip`](https://www.cpm.z80.de/download/cpm8k11.zip) | Original four-disk 8-inch CP/M-8000 1.1 distribution, retained as an independent historical comparison | `3df52fdc8393283b08c900f00bcb86cd8f03bd2e9c40be4f58145bc857d9b183` |
+
+Five of the six checked-in M20 images are byte-for-byte copies of the images
+in `rel11.zip`.  The active CP/M files in `REL11A.IMG` are also byte-for-byte
+identical; its whole-image hash differs because of unused track padding, an
+erased directory entry, and data in unallocated sectors.  The four 8-inch
+images formerly imported into the repository match the images in
+`cpm8k11.zip` exactly.  The related `cpm8k13.zip` source snapshot is not an
+input to this tree.
+
+The derivation is therefore:
+
+```text
+cpm.z80.de/rel11.zip -> six checked-in M20 images -> make regenerate
+cpm.z80.de/8k0583.zip -> assembler/linker/FPE source bases -> maintained edits
+cpm.z80.de/cpm8k11.zip -> original-release verification baseline
+```
+
+Locally written hosted-emulator code, target BIOSes, reconstructed sources,
+and rebuilt objects are identified separately and are not represented as
+unaltered archive content.
+
 ```sh
 make regenerate  # extract the 76 pristine files from the six M20 images
 make overlay     # apply maintained linker and reconstructed FPE sources
