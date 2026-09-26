@@ -29,11 +29,15 @@ in chunk 2's tail and keeps **chunk 3 (`0xC000-0xFFFF`) entirely free** as the
 copy/map window:
 
 ```
-0x0000-0x9252  code+data+bss   (chunks 0,1,2)
-0x9300         PSA (trap vectors)
-..0xBF00       system stack (grows down, ~11 K)   SYSSTK
+0x0000-~0x9500 code+data+bss   (chunks 0,1,2)
+0xB000         PSA (trap vectors)                 SYSPSA
+..0xBF00       system stack (grows down, ~3.8 K)  SYSSTK
 0xC000-0xFFFF  aperture window (chunk 3)          -- NOT used by the OS
 ```
+
+The PSA must be above the whole image including bss (the Makefile fails the
+build otherwise). It used to be `0x9300`, inside the CCP's bss: `trapinit`'s
+trap entries at `SYSPSA+4..+0x17` overwrote the SUBMIT save area.
 
 ## Placing and reaching the TPA
 

@@ -36,8 +36,8 @@ $(ROMDIR)/z8kmon.bin: $(MONITOR)
 $(SYSTEMDIR)/z8002-demo.boot: $(SYSTEMDIR)/cpm.sys
 	$(MAKE) -C $(ROOT)/src/xoututils BUILDDIR=$(ROOT)/build/tools xout2flat
 	$(XOUT2FLAT) $< $(SYSTEMDIR)/cpm.flat
-	@test $$(wc -c < $(SYSTEMDIR)/cpm.flat) -le 65536 || \
-		{ echo "error: flat CP/M system exceeds 64 KiB" >&2; exit 1; }
+	@test $$(wc -c < $(SYSTEMDIR)/cpm.flat) -le 45056 || \
+		{ echo "error: flat CP/M system (incl. bss) reaches SYSPSA 0xB000 (biosboot.8kn)" >&2; exit 1; }
 	dd if=/dev/zero of=$@ bs=65536 count=1 2>/dev/null
 	dd if=$(SYSTEMDIR)/cpm.flat of=$@ conv=notrunc 2>/dev/null
 	@echo "Z8002-demo boot payload: $@ (128 sectors)"

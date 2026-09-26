@@ -43,16 +43,21 @@ __text:	.sect
 
 
 SYSTEM	.equ	00000000h	; system address (loaded here by the monitor)
-;* Bank-0 layout (system mode).  The OS occupies chunks 0-2 (code ends ~0x9252);
-;* the PSA and the system stack live in chunk 2's free tail, which leaves
-;* CHUNK 3 (0xC000-0xFFFF) entirely FREE as the copy/map aperture window that
+;* Bank-0 layout (system mode).  The OS occupies chunks 0-2; the PSA and the
+;* system stack live in chunk 2's free tail, which leaves CHUNK 3
+;* (0xC000-0xFFFF) entirely FREE as the copy/map aperture window that
 ;* mem_bcp uses to reach the TPA bank (SAP1 / C3=B -- see biosmem.8kn).
-;*   0x0000-0x9252  code+data+bss      (chunks 0,1,2)
-;*   0x9300         PSA (trap vectors, ~48 bytes)
-;*   ..0xBF00       system stack (grows down, ~11K -- deep BDOS chain needs <1K)
+;*   0x0000-~0x9500 code+data+bss (cpm.flat; the Makefile checks it ends
+;*                  below SYSPSA)
+;*   0xB000         PSA (trap vectors, 256-byte aligned)
+;*   ..0xBF00       system stack (grows down toward the PSA)
 ;*   0xC000-0xFFFF  aperture window (chunk 3), NOT used by the OS
+;* The PSA must lie above the whole image INCLUDING bss: trapinit writes the
+;* trap entries at SYSPSA+4..+0x17, and the CCP/BDOS bss extends past
+;* 0x9300.  The old 0x9300 put those entries inside the CCP's SUBMIT save
+;* area (_save_su).
 SYSSTK	.equ	0BF00h		; system stack top (chunk 2; keeps chunk 3 free)
-SYSPSA	.equ	09300h		; system PSA (above the OS image)
+SYSPSA	.equ	0B000h		; system PSA (above the OS image + bss)
 
 
 
