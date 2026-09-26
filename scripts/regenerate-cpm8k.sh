@@ -32,9 +32,10 @@ cp src/diskdefs_m20.mame "$TMP/diskdefs"
 for i in $IMAGES; do
 	(
 		cd "$TMP"
-		cpmcp -f m20 "$ROOT/$IMGDIR/$i.IMG" '0:*' .
+		cpmcp -T raw -f m20 "$ROOT/$IMGDIR/$i.IMG" '0:*' .
 	)
 done
+rm -f "$TMP/diskdefs"	# cpmtools' format file, not a distribution file
 echo "extracted $(ls "$TMP" | wc -l | tr -d ' ') files from $(set -- $IMAGES; echo $#) images"
 
 # Replace the target's top-level files with the freshly-extracted pristine set.

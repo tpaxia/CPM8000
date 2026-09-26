@@ -32,10 +32,23 @@ copy_file()
 	case "$copy_base" in
 		BIOSDEFS.Z8K|README|*.[CHS]|*.SUB|*.ASM|*.PD|*.8KN) copy_text=1 ;;
 	esac
+	# -T raw forces libdsk's plain POSIX/raw driver instead of letting it
+	# autodetect: on this machine, autodetection itself is broken (an
+	# earlier magic-number-sniffing driver in libdsk's probe order errors
+	# out instead of returning "not mine", aborting the whole probe before
+	# it ever reaches the raw driver that would actually work) and every
+	# cpmtools command that opens an *existing* image -- cpmcp, cpmls,
+	# fsck.cpm -- fails with a misleading "cannot open ... No such file or
+	# directory", even though the file demonstrably exists. mkfs.cpm is
+	# unaffected because creating a new image is a different libdsk code
+	# path (dsk_creat, not dsk_open) that never runs the autodetect probe.
+	# Forcing -T raw sidesteps the broken probe entirely; verified against
+	# both a from-source rebuild of cpmtools+libdsk and the existing
+	# Homebrew install, so this is not a stale-binary issue.
 	if [ "$copy_text" -eq 1 ] && [ "$(tail -c 1 "$copy_source" | od -An -tu1 | tr -d ' ')" != 26 ]; then
-		(cd "$WORK" && cpmcp -f "$CPM_FORMAT" -t "$copy_image" "$copy_source" 0:)
+		(cd "$WORK" && cpmcp -T raw -f "$CPM_FORMAT" -t "$copy_image" "$copy_source" 0:)
 	else
-		(cd "$WORK" && cpmcp -f "$CPM_FORMAT" "$copy_image" "$copy_source" 0:)
+		(cd "$WORK" && cpmcp -T raw -f "$CPM_FORMAT" "$copy_image" "$copy_source" 0:)
 	fi
 }
 
@@ -55,7 +68,7 @@ check_image()
 	check_path=$1
 	(
 		cd "$WORK"
-		fsck.cpm -f "$CPM_FORMAT" "$check_path"
+		fsck.cpm -T raw -f "$CPM_FORMAT" "$check_path"
 	)
 }
 

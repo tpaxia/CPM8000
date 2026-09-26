@@ -21,7 +21,10 @@ done
 
 EMU=${CPM8K_EMU:-build/emu/cpm8k-$MODEL}
 EMU_MODEL_ARG=
-[ -z "${CPM8K_EMU:-}" ] || EMU_MODEL_ARG="-M $MODEL"
+# Only the legacy unified executable takes -M; the per-model builds reject it.
+if [ -n "${CPM8K_EMU:-}" ] && "$EMU" -h 2>&1 | grep -q -- '-M cpu'; then
+	EMU_MODEL_ARG="-M $MODEL"
+fi
 if [ "$RECORD" -eq 1 ]; then
 	[ -n "${CPM8K_EMU:-}" ] || {
 		echo "error: --record requires CPM8K_EMU=<known-good-emulator>" >&2
@@ -53,7 +56,7 @@ run_submit()
 	name=$1
 	echo "-- SUBMIT $name ($MODEL) --"
 	log=$OUT/$name.log
-	# EMU_MODEL_ARG is used only with an explicitly supplied legacy executable.
+	# EMU_MODEL_ARG is set only for an explicitly supplied legacy executable.
 	# shellcheck disable=SC2086
 	printf 'SUBMIT %s\n' "$name" | "$EMU" $EMU_MODEL_ARG -d C=dir:"$DRIVE" > "$log" 2>&1
 	LC_ALL=C tr -cd '\11\12\40-\176' < "$log" \

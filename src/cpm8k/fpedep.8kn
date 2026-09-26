@@ -2,7 +2,7 @@
 ;*** The gettext/getmem/putmem bodies here were transcribed from the
 ;*** distribution fpedep.o disassembly (the hand-optimized variant that
 ;*** uses ldk/xor/clrb); with biosdefs.z8k this reproduces the object
-;*** content byte-for-byte. Assemble with asz8k -> xcon.
+;*** machine code and relocations. Assemble with asz8k, which chains to xcon.
 ;*************************************************
 ;** Change history --
 ;** 30mar81: Broken off from general interface.
@@ -26,10 +26,10 @@
 ;*************************************************
 __data	.sect
 	.GLOBAL	stareg,staevnt,stafcw,stapcsg
-stareg	.WORD	 4	;offset of r0
-staevnt	.WORD	36	;saved 1st word
-stafcw	.WORD	38	;saved fcw
-stapcsg	.WORD	40	;seg word of PC
+stareg	.WORD	co	;offset of r0
+staevnt	.WORD	co+32	;saved 1st word
+stafcw	.WORD	co+34	;saved fcw
+stapcsg	.WORD	co+pcbase ;word preceding saved PC
 
 ;*************************************************
 ;** ADDRESSES --
@@ -118,4 +118,3 @@ putmem:
 	ldk	r2,#0
 	sc	#MEM_SC
 	ret
-

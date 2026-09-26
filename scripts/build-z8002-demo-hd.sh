@@ -32,7 +32,7 @@ dd if="$FILESYSTEM" of="$RAW" bs=512 seek=128 conv=notrunc 2>/dev/null
 CHECK=$(mktemp -d "${TMPDIR:-/tmp}/z8002-demo-check.XXXXXX")
 trap 'rm -rf "$CHECK"' EXIT INT TERM
 cp "$DISKDEFS" "$CHECK/diskdefs"
-(cd "$CHECK" && fsck.cpm -f z8002demohd "$ROOT/$FILESYSTEM")
+(cd "$CHECK" && fsck.cpm -T raw -f z8002demohd "$ROOT/$FILESYSTEM")
 
 CHDMAN=${CHDMAN:-chdman}
 command -v "$CHDMAN" >/dev/null 2>&1 || {

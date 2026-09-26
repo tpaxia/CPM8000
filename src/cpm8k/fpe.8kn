@@ -2654,7 +2654,7 @@ toptab:
 ;** The entry point to the emulator
 ;** Toptab is a table of 64 startup addresses.
 ;*************************************************
-frm_set	.equ	24h
+frm_set	.equ	20h+co
 	.GLOBAL	fp_epu
 __text	.sect
 fp_epu:
