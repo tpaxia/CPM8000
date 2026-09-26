@@ -4,6 +4,9 @@
 # Untracked reference material
 /other/
 
+# Local MAME checkout (for driver development/testing; not part of this repo)
+/mame/
+
 # Emulator runtime drive directories
 /drives/
 

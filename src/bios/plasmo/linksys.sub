@@ -1,0 +1,2 @@
+; relink Plasmo with the non-segmented CCP+BDOS
+ld8k -w -o cpm.sys bios.rel cpmsys2.rel -lcpm

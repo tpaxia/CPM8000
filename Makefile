@@ -20,7 +20,7 @@ LIBDIR = $(BUILDDIR)/lib
 FPE_Z8001_DIR = $(BUILDDIR)/fpe-z8001
 FPE_Z8002_DIR = $(BUILDDIR)/fpe-z8002
 FPE_OBJECTS = src/fpe/objects
-.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats z8002-demo-image dev-z8001 dev-z8002 submit-regression submit-regression-z8001 submit-regression-z8002 fpe-regression fpe-regression-z8001 fpe-regression-z8002 regenerate-fpe verify-fpe-objects
+.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats z8002-demo-image plasmo-image dev-z8001 dev-z8002 submit-regression submit-regression-z8001 submit-regression-z8002 fpe-regression fpe-regression-z8001 fpe-regression-z8002 regenerate-fpe verify-fpe-objects
 
 all: emu
 
@@ -51,6 +51,9 @@ media-formats:
 
 z8002-demo-image:
 	scripts/build-z8002-demo-hd.sh
+
+plasmo-image:
+	scripts/build-plasmo-hd.sh
 
 dev-z8001:
 	scripts/build-development-drive.sh z8001
