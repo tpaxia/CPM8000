@@ -61,7 +61,8 @@ included monitor. The image builder installs the generated system payload
 directly in the ATA boot area; `MKPUTBT` implements the unrelated M20 layout.
 
 The validated monitor is included as `z8kmon.bin`, making the BIOS package
-self-contained. System generation copies it to
+self-contained. It is a Z8002 port of 4sun5bu's `z8kboot` machine-code
+monitor, adapted to this machine's MMU, Z80-SIO console and ATA disk. System generation copies it to
 `build/roms/z8002demo/z8kmon.bin`, the ROM-set layout expected by MAME. MAME
 consumes the CHD; the corresponding raw image is also retained.
 
