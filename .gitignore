@@ -30,6 +30,3 @@ bios_trace.log
 sc_trace.log
 sc_trace
 /tmp/
-
-# Local-only disk-image analysis
-/distribution/DISK_IMAGES.md
