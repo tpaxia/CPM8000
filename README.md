@@ -86,6 +86,10 @@ The principal sections are independently usable:
 - [System generation and development media](#system-generation-and-development-media)
 - [Component notes](#component-notes)
 
+To add a new machine, see
+[Creating a package](src/bios/README.md#creating-a-package) in the BIOS
+package guide.
+
 ## Sources and format conversions
 
 This section explains where the source tree comes from and which files are
@@ -275,6 +279,26 @@ This section describes two related but separate operations.  Sysgen produces
 target-specific guest binaries; media generation packages a development tree
 in a target-declared logical filesystem format.  Neither operation installs a
 boot sector.
+
+### What you choose
+
+Every build is defined by these choices:
+
+| Choice | How | Notes |
+|--------|-----|-------|
+| Machine (BIOS package) | `NAME=<package>` | A directory under `src/bios/`.  The package fixes the **target CPU** (its `TARGET_CPU` file: `z8001` or `z8002`) and the CCP+BDOS it links (`CPMSYS`). |
+| Host CPU | `HOST_CPU=z8001\|z8002` | The hosted emulator that runs the original tools.  Defaults to the target CPU; either host produces identical binaries. |
+| Media format | `FORMAT=<format>` | Only for `make media`: one of the formats the package lists with `make media-formats NAME=<package>`. |
+
+```sh
+make system NAME=plasmo                          # target z8002, host z8002
+make system NAME=plasmo HOST_CPU=z8001           # target z8002, host z8001
+make media NAME=plasmo FORMAT=plasmo-hd
+```
+
+To support a new machine, write a new BIOS package; the
+[BIOS package guide](src/bios/README.md#creating-a-package) explains how,
+including choosing its target CPU and media format.
 
 ### Sysgen
 

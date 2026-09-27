@@ -114,3 +114,52 @@ bootable disk (system in LBA 0-127, filesystem from LBA 128):
 make z8002-demo-image   # build/media/z8002-demo/z8002-demo-hd/
 make plasmo-image       # build/media/plasmo/plasmo-hd/
 ```
+
+## Creating a package
+
+A new machine gets its own package directory, `src/bios/<name>`.  You decide
+three things for it: its target CPU, the media format(s) its development tree
+can be written to, and (at build time, not in the package) which host CPU runs
+the build.
+
+1. **Copy the closest package.**
+   - `m20` -- a Z8001 board; empty overlay, add only what differs.
+   - `z8002-demo` -- a Z8002 board with a multi-bank MMU.
+   - `plasmo` -- a Z8002 board with a single bank window.
+     [`plasmo/PORTING.md`](plasmo/PORTING.md) lists every change from
+     `z8002-demo` and is a complete worked example.
+2. **Set the target CPU and CCP+BDOS.**  Write `TARGET_CPU` and `CPMSYS`:
+   `z8001` + `cpmsys.rel` (segmented), or `z8002` + `cpmsys2.rel`
+   (non-segmented).  A Z8002 package also needs `cpmsys.sub` and `linksys.sub`
+   overrides that link `cpmsys2.rel` (copy them from `z8002-demo`).
+3. **Change the machine-specific code.**  Usually:
+   - `biosio.8kn` -- console and disk ports and handshakes;
+   - `bios.c` -- console defines, `memtab` (where the TPA is), `mem_bcp`
+     (copies between the OS and the TPA);
+   - `biosmem.8kn`, `biostrap.8kn` -- bank switching (`xfersc`);
+   - `biosboot.8kn` -- stack and PSA addresses; the PSA must lie above the
+     whole image including bss.
+4. **Write the `Makefile`.**  Required targets:
+   - `bios.rel` -- call `scripts/build-bios.sh` with `BIOS_OVERLAY`,
+     `TARGET_CPU` and `HOST_CPU` (copy the rule from an existing package);
+   - `media-formats` -- print the supported media format names.
+
+   Optional: `system-artifacts`, which sysgen runs with `SYSTEMDIR` after
+   linking -- e.g. a flat boot payload and a check that the image stays below
+   the PSA (see `z8002-demo` or `plasmo`).
+5. **Choose or add a media format.**  Reuse an existing one from `src/media/`,
+   or add `src/media/<format>/format.conf` plus a cpmtools diskdefs file (see
+   [`src/media/README.md`](../media/README.md)).  A bootable disk image
+   (system + filesystem) needs its own script and `make` target, like
+   `scripts/build-plasmo-hd.sh` / `make plasmo-image`.
+6. **Build and test.**
+
+   ```sh
+   make system NAME=<name>                  # host = target CPU
+   make system NAME=<name> HOST_CPU=z8001   # or pick the host explicitly
+   make dev NAME=<name>                     # development drive
+   make media NAME=<name> FORMAT=<format>
+   ```
+
+   The hosted emulator runs its own thin BIOS, not yours; running the new
+   BIOS needs the real board or a machine emulator (e.g. a MAME driver).
