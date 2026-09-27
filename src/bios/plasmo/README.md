@@ -18,13 +18,19 @@ See [TPA.md](TPA.md) for the complete memory model, why this hardware can
 only run merged (not split-I/D) transient programs, and the hard
 instruction-fetch-safety constraint the aperture code has to satisfy.
 
+The Zilog C compiler, assembler and linker need separate 64 KiB spaces for
+code and data, but Plasmo gives a program only one; the board has enough RAM
+for this (256 KiB fitted, only 128 KiB used today), so an updated CPLD that
+addresses all of it and sends a program's instruction fetches and data
+accesses to different banks would let the compiler run natively.
+
 ## Hardware summary
 
 - **CPU**: Z8002 (non-segmented), all I/O via register-indirect `IN`/`OUT` —
   some early-date (1979) Z8002 samples hang on direct-addressed I/O, so this
   BIOS never uses it, matching the board's own monitor.
-- **Memory**: 128 KiB RAM as four fixed 32 KiB quarters (System-Lo, System-Hi,
-  Normal-Lo, Normal-Hi). System-Hi is switchable via port `$85` to peek into
+- **Memory**: 256 KiB RAM fitted, of which the CPLD addresses 128 KiB as four
+  fixed 32 KiB quarters (System-Lo, System-Hi, Normal-Lo, Normal-Hi). System-Hi is switchable via port `$85` to peek into
   either TPA half; Normal mode (the TPA) is always a fixed, unbanked 64 KiB.
 - **Console**: CPLD UART at `$81` (data) / `$83` (status: bit0=RxRdy,
   bit1=TxEmpty), fixed 115200 N81, no interrupts.

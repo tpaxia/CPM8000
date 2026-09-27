@@ -19,7 +19,8 @@ errors when checked against the primary sources.
 
 ## The memory model
 
-Total RAM is 128 KiB, in four fixed 32 KiB quarters:
+256 KiB of RAM is fitted (two 128K×8 chips), but the CPLD addresses only
+128 KiB of it, as four fixed 32 KiB quarters:
 
 | Region | Address | Mode | Fixed or mapped |
 |---|---|---|---|
@@ -59,6 +60,12 @@ bank to go, and `_usrdseg` would silently alias back onto the code bank.
 
 `_usrseg`/`_usrdseg` are always `0x0100` (bank 1) in practice — there is
 only one possible TPA to point them at.
+
+The Zilog C compiler, assembler and linker need separate 64 KiB spaces for
+code and data, but Plasmo gives a program only one; the board has enough RAM
+for this (256 KiB fitted, only 128 KiB used today), so an updated CPLD that
+addresses all of it and sends a program's instruction fetches and data
+accesses to different banks would let the compiler run natively.
 
 ### The System-Hi aperture (the copy/map window)
 

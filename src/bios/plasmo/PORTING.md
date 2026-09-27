@@ -58,3 +58,9 @@ Start from a copy of `src/bios/z8002-demo`. Unchanged: `biosif.8kn`,
 
 Split-I/D programs (`0xEE0B`: zcc1/2/3, asz8k, ld8k) cannot run on Plasmo:
 there is no second TPA bank.
+
+The Zilog C compiler, assembler and linker need separate 64 KiB spaces for
+code and data, but Plasmo gives a program only one; the board has enough RAM
+for this (256 KiB fitted, only 128 KiB used today), so an updated CPLD that
+addresses all of it and sends a program's instruction fetches and data
+accesses to different banks would let the compiler run natively.
