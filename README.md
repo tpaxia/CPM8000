@@ -382,6 +382,24 @@ This section records details useful when changing individual components.  The
 earlier sections are sufficient for ordinary source, emulator, sysgen, and
 media use.
 
+### Assembler
+
+`src/asm8k` holds the sources of the Zilog CP/M-Z8000 assembler `asz8k`,
+including the Z8000 EPA extended floating-point instructions (`fld`, `fadd`,
+... with `f0`-`f7`) used by `startup.8kn` and the FPE.  Its predef
+`src/asm8k/asz8k.pd` is the distribution copy.  The rebuilt assembler
+assembles `startup.o`, `biosasm.o` and `bios.rel` byte-identical to the
+distribution objects.
+
+Rebuild it with:
+
+```sh
+scripts/build-asz8k.sh          # -> build/asm8k/asz8k.z8k
+```
+
+`src/asm8k/opcodes.z8k` is an assembler test program that lists every
+opcode.
+
 ### Linker
 
 The distribution `ld8k.z8k` is V1.01j and does not reproduce the linker used

@@ -67,15 +67,9 @@ All 60 files of the 8" set are also in the M20 set. Comparing bytes
 
 ### `asz8k.pd` (assembler predef)
 
-| Copy | Trimmed size | md5 (trimmed) |
-|---|---|---|
-| 8" image (`8K_3OF4`) | 21,120 | `d839a5a6…` |
-| M20 image (`REL11B`) | 20,932 | `093fc68b…` |
-| Checked-in `src/cpm8k/asz8k.pd` | 12,735 | `7598e1e6…` |
-
-The two image copies differ only at the tail (the M20 copy is one record
-shorter). The checked-in copy is a distinct, corrected file (see the README
-note about the FMSKEL2 flag fix) and matches neither image.
+The two image copies differ only after the M20 copy's end-of-file marker
+(the 8" copy is one record longer). The checked-in `src/cpm8k/asz8k.pd` and
+`src/asm8k/asz8k.pd` are byte-identical to the M20 (`REL11B`) copy.
 
 ## Reading the images
 
