@@ -16,4 +16,3 @@
   `0x0000`. Needs a monitor extension or another boot path.
 - Check the CF layout (system in LBA 0-127, filesystem from LBA 128) against
   whatever boot path the real board ends up using.
-- Commit the Plasmo docs (`src/bios/plasmo/*.md`).
