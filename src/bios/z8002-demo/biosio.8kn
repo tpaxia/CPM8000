@@ -1,8 +1,8 @@
 ;************ biosio.8kn -- Z8002-demo machine *********************
 ;*
-;*	Low-level I/O for the CP/M-8000(tm) BIOS on the Z8002 machine.
-;*	Replaces the Olivetti-M20 PROM interface (disk_io/crt_put/cold_boot)
-;*	with the machine's generic ATA disk and Z80-SIO console.
+;*	Low-level I/O for the CP/M-8000(tm) BIOS on the Z8002-demo machine:
+;*	disk_io/crt_put/cold_boot for its generic ATA disk and Z80-SIO
+;*	console.
 ;*	Non-segmented (Z8002).  Ported from z8002-bios/ide.s + sio.s.
 ;*
 

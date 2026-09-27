@@ -1,4 +1,6 @@
-;********** wboot.s -- Olivetti bootstrap writer*****
+;********** biosboot.8kn -- Z8002-demo machine *****
+;*
+;*	Post-boot entry: transfer vector, stack and PSA.
 ;*
 ;* 821013 S. Savitzky (Zilog) -- adapt for nonseg.
 ;* 820930 S. Savitzky (Zilog) -- created
@@ -6,8 +8,6 @@
 ;****************************************************
 
 ;  01/12/83	Adapted for the Kontron ECB/16 Z8002 (DMH)
-;  01/16/83	Added relocation code to relocate the
-;		Z8002 CP/M from 8000h to 0000h (DMH).
 __text:	.sect
 
 ;****************************************************
@@ -53,9 +53,8 @@ SYSTEM	.equ	00000000h	; system address (loaded here by the monitor)
 ;*   ..0xBF00       system stack (grows down toward the PSA)
 ;*   0xC000-0xFFFF  aperture window (chunk 3), NOT used by the OS
 ;* The PSA must lie above the whole image INCLUDING bss: trapinit writes the
-;* trap entries at SYSPSA+4..+0x17, and the CCP/BDOS bss extends past
-;* 0x9300.  The old 0x9300 put those entries inside the CCP's SUBMIT save
-;* area (_save_su).
+;* trap entries at SYSPSA+4..+0x17, and anything in the bss there (e.g. the
+;* CCP's SUBMIT save area) would overwrite the trap vectors at run time.
 SYSSTK	.equ	0BF00h		; system stack top (chunk 2; keeps chunk 3 free)
 SYSPSA	.equ	0B000h		; system PSA (above the OS image + bss)
 
@@ -77,7 +76,7 @@ SYSPSA	.equ	0B000h		; system PSA (above the OS image + bss)
 ;* post-boot init
 ;* The monitor has already loaded the system at 0 and programmed the MMU
 ;* (OS home = bank 0).  We just set up the stack + PSA and enter the BIOS.
-;* (No 0x8000->0 relocation -- we run where we were loaded.)
+;* The system runs where it was loaded (no relocation).
 
 entry:	DI	VI,NVI
 	ld	r15, #SYSSTK	; init stack pointer

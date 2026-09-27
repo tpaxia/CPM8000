@@ -1,12 +1,8 @@
-;************ biostrap.z8k **************************
+;************ biostrap.8kn -- Z8002-demo machine ****
 ;*
 ;*	Trap handlers for P-CP/M (tm) BIOS
 ;*
 ;* 821013 S. Savitzky (Zilog) -- created
-;* 821123 D. Dunlop (Zilog)   -- added Olivetti M20-
-;*	  specific code to invalidate track buffer
-;*	  contents when disk drive motor stops
-;*	  (fixes directory-overwrite on disk change)
 ;*
 
 ;  01/12/83	Adapted for Z8002 (DMH)
@@ -15,8 +11,8 @@ __text:	.sect
 ;****************************************************
 ;*
 ;* NOTE	
-;*	Trap and interrupt handlers are started up
-;*	in segmented mode on the Z8001.
+;*	On the Z8002 traps are taken in non-segmented
+;*	system mode.  The BIOS uses no device interrupts.
 ;*
 ;****************************************************
 
@@ -66,8 +62,7 @@ _trapvec:
 ;*
 ;* System Call and General Trap Handler And Dispatch
 ;*
-;*	It is assumed that the system runs 
-;*	non-segmented on a segmented CPU.
+;*	The system runs non-segmented (Z8002).
 ;*
 ;*	_trap is jumped to with the
 ;*	following information on the stack:
