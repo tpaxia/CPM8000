@@ -17,29 +17,33 @@
 #  - Both maintained objects additionally expose the co and pcbase parameter
 #    symbols used to select the target call and saved-PC frame layout.
 #
-# Usage: scripts/build-fpe.sh [z8001|z8002] [output-dir]
+# The first argument is the target CPU (which frame definitions and fpedep
+# variant to assemble).  HOST_CPU (default: the target) selects the hosted
+# emulator that runs the assembler; the output does not depend on it.
+#
+# Usage: [HOST_CPU=...] scripts/build-fpe.sh [z8001|z8002] [output-dir]
 
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-EMU_MODEL=${1:-z8001}
-case "$EMU_MODEL" in
+TARGET_CPU=${1:-z8001}
+case "$TARGET_CPU" in
 	z8001) BIOSDEFS=biosdefs.z8k; FPEDEP=fpedep.z8k ;;
 	z8002) BIOSDEFS=biosdefs-z8002.z8k; FPEDEP=fpedep-z8002.z8k ;;
 	*) echo "usage: $0 [z8001|z8002] [output-dir]" >&2; exit 2 ;;
 esac
-BUILD_EMU_MODEL=${BUILD_EMU_MODEL:-$EMU_MODEL}
-EMU=build/emu/cpm8k-$BUILD_EMU_MODEL
+HOST_CPU=${HOST_CPU:-$TARGET_CPU}
+EMU=build/emu/cpm8k-$HOST_CPU
 SRC=src/cpm8k
 FSRC=src/fpe
 SUB=scripts/fpe.sub
-OUT=${2:-build/fpe-$EMU_MODEL}
+OUT=${2:-build/fpe-$TARGET_CPU}
 
 [ -x "$EMU" ] || { echo "error: $EMU not built -- run 'make emu' first" >&2; exit 1; }
-[ -f build/bios-emu-$BUILD_EMU_MODEL/cpm.sys ] || {
-	echo "error: build/bios-emu-$BUILD_EMU_MODEL/cpm.sys missing -- run 'make bios-emu-$BUILD_EMU_MODEL' first" >&2
+[ -f build/bios-emu-$HOST_CPU/cpm.sys ] || {
+	echo "error: build/bios-emu-$HOST_CPU/cpm.sys missing -- run 'make bios-emu-$HOST_CPU' first" >&2
 	exit 1
 }
 

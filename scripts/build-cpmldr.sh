@@ -21,21 +21,25 @@
 #     cpmldr.rel is an older object snapshot (its data segment is 230 bytes
 #     smaller) that the current sources do not reproduce.
 #
-# Usage: scripts/build-cpmldr.sh [output-dir]      (default: build/ldr-src)
+# HOST_CPU (z8001|z8002, default z8001) selects the hosted emulator that runs
+# the toolchain; the output does not depend on it.
+#
+# Usage: [HOST_CPU=...] scripts/build-cpmldr.sh [output-dir]
+#        (default output-dir: build/ldr-src)
 
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-EMU_MODEL=${EMU_MODEL:-z8001}
-EMU=build/emu/cpm8k-$EMU_MODEL
+HOST_CPU=${HOST_CPU:-z8001}
+EMU=build/emu/cpm8k-$HOST_CPU
 SRC=${SRC:-src/cpm8k}
 SUB=$SRC/makeldr.sub
 OUT=${1:-build/ldr-src}
 
 [ -x "$EMU" ] || { echo "error: $EMU not built -- run 'make emu' first" >&2; exit 1; }
-[ -f build/bios-emu-$EMU_MODEL/cpm.sys ] || { echo "error: build/bios-emu-$EMU_MODEL/cpm.sys missing -- run 'make bios-emu-$EMU_MODEL' first" >&2; exit 1; }
+[ -f build/bios-emu-$HOST_CPU/cpm.sys ] || { echo "error: build/bios-emu-$HOST_CPU/cpm.sys missing -- run 'make bios-emu-$HOST_CPU' first" >&2; exit 1; }
 
 # Sources makeldr.sub needs. lbiosasm.8kn (LOADER .equ 1) pulls in the same
 # Loader BIOS sources (stock, from SRC). lbiosasm.8kn (LOADER .equ 1) .inputs

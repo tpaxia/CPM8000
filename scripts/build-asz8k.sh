@@ -14,22 +14,26 @@
 # C:, runs scripts/asz8k.sub, and copies the result out. The recipe writes
 # _asz8k.z8k (leading underscore) so it never clobbers a running assembler.
 #
-# Usage: scripts/build-asz8k.sh [output-dir]     (default: build/asm8k)
+# HOST_CPU (z8001|z8002, default z8001) selects the hosted emulator that runs
+# the toolchain; the output does not depend on it.
+#
+# Usage: [HOST_CPU=...] scripts/build-asz8k.sh [output-dir]
+#        (default output-dir: build/asm8k)
 
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-EMU_MODEL=${EMU_MODEL:-z8001}
-EMU=build/emu/cpm8k-$EMU_MODEL
+HOST_CPU=${HOST_CPU:-z8001}
+EMU=build/emu/cpm8k-$HOST_CPU
 SRC=src/cpm8k
 ASRC=src/asm8k
 SUB=scripts/asz8k.sub
 OUT=${1:-build/asm8k}
 
 [ -x "$EMU" ] || { echo "error: $EMU not built -- run 'make emu' first" >&2; exit 1; }
-[ -f build/bios-emu-$EMU_MODEL/cpm.sys ] || { echo "error: build/bios-emu-$EMU_MODEL/cpm.sys missing -- run 'make bios-emu-$EMU_MODEL' first" >&2; exit 1; }
+[ -f build/bios-emu-$HOST_CPU/cpm.sys ] || { echo "error: build/bios-emu-$HOST_CPU/cpm.sys missing -- run 'make bios-emu-$HOST_CPU' first" >&2; exit 1; }
 
 DRIVE=$(mktemp -d "${TMPDIR:-/tmp}/cpm8k-asz8k.XXXXXX")
 trap 'rm -rf "$DRIVE"' EXIT INT TERM

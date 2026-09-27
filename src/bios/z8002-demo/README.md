@@ -5,15 +5,16 @@ by MAME. It uses Z80-SIO channel B for the console, a generic ATA task-file
 interface for disk I/O, and a system/normal banking MMU for CP/M's SC #1 memory
 services.
 
-The package selects the original non-segmented `cpmsys2.rel` and runs its guest
-build under the hosted Z8002 emulator.  Its Memory Region Table uses the
+The package selects the original non-segmented `cpmsys2.rel` (`CPMSYS`) and
+targets the Z8002 (`TARGET_CPU`); its guest build runs on the hosted Z8002 by
+default, or on the hosted Z8001 with `HOST_CPU=z8001`.  Its Memory Region Table uses the
 representation expected by that binary: bank 1 is `0x01000000`, bank 2 is
 `0x02000000`, and bank 3 is `0x03000000`.
 
 Its `CPMSYS.SUB` and `LINKSYS.SUB` overrides select `cpmsys2.rel`. Run
-`make dev-z8002` to compose these overrides, the Z8002 FPE definitions, and the
-common toolchain as `drives/dev-z8002`; the ordinary unsuffixed submit commands
-then build only the Z8002 target.
+`make dev NAME=z8002-demo` to compose these overrides, the Z8002 FPE
+definitions, and the common toolchain as `drives/dev-z8002-demo`; the ordinary
+unsuffixed submit commands then build only the Z8002 target.
 
 The complete development submit suite has been run from a clean disk under
 MAME: `ASZ8K`, `LD8K`, `FPE`, `BIOS`, `CPMSYS`, `LINKSYS`, `WUMP`, and
@@ -32,7 +33,7 @@ Build the system and the complete 8 MiB development disk with:
 
 ```sh
 make system NAME=z8002-demo
-make dev-z8002
+make dev NAME=z8002-demo
 make z8002-demo-image
 ```
 

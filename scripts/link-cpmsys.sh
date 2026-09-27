@@ -6,8 +6,10 @@
 # the selected CCP+BDOS object and C library (libcpm.a) into cpm.sys, using ld8k
 # inside the emulator. The BIOS object and the system substrate are linked
 # separately: the BIOS package builds bios.rel; this does the final system link.
+# The host (hosted emulator that runs ld8k) does not affect the result.
 #
-# Usage: scripts/link-cpmsys.sh <bios.rel> <out-dir> [cpmsys.rel] [z8001]
+# Usage: scripts/link-cpmsys.sh <bios.rel> <out-dir> [cpmsys.rel] [host]
+#        (host: z8001|z8002, default $HOST_CPU or z8001)
 
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -15,11 +17,15 @@ cd "$ROOT"
 
 SRC=src/cpm8k
 SUB=scripts/linkcpmsys.sub
-BIOS_REL=${1:?usage: link-cpmsys.sh <bios.rel> <out-dir> [system-rel] [cpu-model]}
-OUT=${2:?usage: link-cpmsys.sh <bios.rel> <out-dir> [system-rel] [cpu-model]}
+BIOS_REL=${1:?usage: link-cpmsys.sh <bios.rel> <out-dir> [system-rel] [host]}
+OUT=${2:?usage: link-cpmsys.sh <bios.rel> <out-dir> [system-rel] [host]}
 CPMSYS=${3:-cpmsys.rel}
-EMU_MODEL=${4:-z8001}
-EMU=build/emu/cpm8k-$EMU_MODEL
+HOST_CPU=${4:-${HOST_CPU:-z8001}}
+case "$HOST_CPU" in
+z8001|z8002) ;;
+*) echo "error: unsupported host '$HOST_CPU'" >&2; exit 2 ;;
+esac
+EMU=build/emu/cpm8k-$HOST_CPU
 
 [ -x "$EMU" ] || { echo "error: $EMU not built -- run 'make emu' first" >&2; exit 1; }
 [ -s "$BIOS_REL" ] || { echo "error: BIOS object '$BIOS_REL' missing" >&2; exit 1; }

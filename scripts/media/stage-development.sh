@@ -4,17 +4,19 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-DEST=${1:?usage: stage-development.sh <destination> [bios-overlay] [cpu-model]}
+# The target CPU selects the FPE definitions and submit recipes; it comes from
+# the third argument, else the package's TARGET_CPU file, else z8001.
+DEST=${1:?usage: stage-development.sh <destination> [bios-overlay] [target-cpu]}
 BIOS_OVERLAY=${2:-}
-CPU_MODEL=${3:-}
+TARGET_CPU=${3:-}
 
-if [ -z "$CPU_MODEL" ] && [ -n "$BIOS_OVERLAY" ] && [ -f "$BIOS_OVERLAY/EMU_MODEL" ]; then
-	CPU_MODEL=$(sed -n '1p' "$BIOS_OVERLAY/EMU_MODEL")
+if [ -z "$TARGET_CPU" ] && [ -n "$BIOS_OVERLAY" ] && [ -f "$BIOS_OVERLAY/TARGET_CPU" ]; then
+	TARGET_CPU=$(sed -n '1p' "$BIOS_OVERLAY/TARGET_CPU")
 fi
-: "${CPU_MODEL:=z8001}"
-case "$CPU_MODEL" in
+: "${TARGET_CPU:=z8001}"
+case "$TARGET_CPU" in
 	z8001|z8002) ;;
-	*) echo "error: unsupported CPU model '$CPU_MODEL'" >&2; exit 2 ;;
+	*) echo "error: unsupported target CPU '$TARGET_CPU'" >&2; exit 2 ;;
 esac
 
 [ -d "$DEST" ] || { echo "error: destination '$DEST' does not exist" >&2; exit 1; }
@@ -31,7 +33,7 @@ done
 # Always replace the regenerated distribution copies with the authoritative
 # maintained FPE sources and the definitions for the selected CPU.
 cp "$ROOT/src/fpe/fpe.z8k" "$DEST/FPE.8KN"
-case "$CPU_MODEL" in
+case "$TARGET_CPU" in
 z8001)
 	cp "$ROOT/src/fpe/fpedep.z8k" "$DEST/FPEDEP.8KN"
 	cp "$ROOT/src/fpe/biosdefs.z8k" "$DEST/BIOSDEFS.Z8K"
@@ -77,8 +79,8 @@ if [ -n "$BIOS_OVERLAY" ]; then
 	done
 fi
 
-# Z8002-demo uses its monitor boot payload and ATA image builder. The M20
-# loader and putboot recipes are not applicable to that target.
-if [ "$CPU_MODEL" = z8002 ]; then
+# Z8002 targets boot a flat system payload from their disk image; the M20
+# loader and putboot recipes do not apply to them.
+if [ "$TARGET_CPU" = z8002 ]; then
 	rm -f "$DEST/MAKELDR.SUB" "$DEST/MKPUTBT.SUB"
 fi

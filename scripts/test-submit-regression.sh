@@ -1,6 +1,12 @@
 #!/bin/sh
 # Build the applicable submit pipelines on one fresh target-specific CP/M drive
 # and compare their final artifacts with the checked-in SHA-256 baseline.
+#
+# The argument is the target CPU (which drive contents and baseline).  HOST_CPU
+# (default: the target) selects the hosted emulator that runs the pipelines;
+# the baseline must match on either host.
+#
+# Usage: [HOST_CPU=z8001|z8002] scripts/test-submit-regression.sh [z8001|z8002] [--record]
 
 set -eu
 export LC_ALL=C
@@ -8,22 +14,27 @@ export LC_ALL=C
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-MODEL=z8001
+TARGET_CPU=z8001
 RECORD=0
 while [ $# -gt 0 ]; do
 	case "$1" in
-		z8001|z8002) MODEL=$1 ;;
+		z8001|z8002) TARGET_CPU=$1 ;;
 		--record) RECORD=1 ;;
 		*) echo "usage: $0 [z8001|z8002] [--record]" >&2; exit 2 ;;
 	esac
 	shift
 done
 
-EMU=${CPM8K_EMU:-build/emu/cpm8k-$MODEL}
+HOST_CPU=${HOST_CPU:-$TARGET_CPU}
+case "$HOST_CPU" in
+	z8001|z8002) ;;
+	*) echo "error: unsupported HOST_CPU '$HOST_CPU'" >&2; exit 2 ;;
+esac
+EMU=${CPM8K_EMU:-build/emu/cpm8k-$HOST_CPU}
 EMU_MODEL_ARG=
 # Only the legacy unified executable takes -M; the per-model builds reject it.
 if [ -n "${CPM8K_EMU:-}" ] && "$EMU" -h 2>&1 | grep -q -- '-M cpu'; then
-	EMU_MODEL_ARG="-M $MODEL"
+	EMU_MODEL_ARG="-M $HOST_CPU"
 fi
 if [ "$RECORD" -eq 1 ]; then
 	[ -n "${CPM8K_EMU:-}" ] || {
@@ -31,14 +42,15 @@ if [ "$RECORD" -eq 1 ]; then
 		exit 2
 	}
 fi
-case "$MODEL" in
+case "$TARGET_CPU" in
 	z8001) BASELINE=tests/submit-regression.sha256 ;;
 	z8002) BASELINE=tests/submit-regression-z8002.sha256 ;;
 esac
-OUT=build/submit-regression/$MODEL
+OUT=build/submit-regression/$TARGET_CPU
+[ "$HOST_CPU" = "$TARGET_CPU" ] || OUT=$OUT-on-$HOST_CPU
 [ -x "$EMU" ] || { echo "error: $EMU missing -- run 'make emu'" >&2; exit 1; }
-[ -s "build/bios-emu-$MODEL/cpm.sys" ] || {
-	echo "error: build/bios-emu-$MODEL/cpm.sys missing -- run 'make emu'" >&2
+[ -s "build/bios-emu-$HOST_CPU/cpm.sys" ] || {
+	echo "error: build/bios-emu-$HOST_CPU/cpm.sys missing -- run 'make emu'" >&2
 	exit 1
 }
 
@@ -47,14 +59,17 @@ trap 'rm -rf "$DRIVE"' EXIT INT TERM
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-BIOS_OVERLAY=
-[ "$MODEL" = z8002 ] && BIOS_OVERLAY="$ROOT/src/bios/z8002-demo"
-scripts/media/stage-development.sh "$DRIVE" "$BIOS_OVERLAY" "$MODEL"
+# Each target is exercised through its reference package.
+case "$TARGET_CPU" in
+	z8001) PACKAGE=m20 ;;
+	z8002) PACKAGE=z8002-demo ;;
+esac
+scripts/media/stage-development.sh "$DRIVE" "$ROOT/src/bios/$PACKAGE"
 
 run_submit()
 {
 	name=$1
-	echo "-- SUBMIT $name ($MODEL) --"
+	echo "-- SUBMIT $name ($TARGET_CPU on $HOST_CPU) --"
 	log=$OUT/$name.log
 	# EMU_MODEL_ARG is set only for an explicitly supplied legacy executable.
 	# shellcheck disable=SC2086
@@ -96,7 +111,7 @@ copy_result CPM.SYS cpmsys-cpm.sys
 rm -f "$DRIVE/CPM.SYS"
 run_submit LINKSYS
 copy_result CPM.SYS linksys-cpm.sys
-if [ "$MODEL" = z8001 ]; then
+if [ "$TARGET_CPU" = z8001 ]; then
 	rm -f "$DRIVE/CPMLDR.REL" "$DRIVE/CPMLDR.SYS"
 	run_submit MAKELDR
 	copy_result CPMLDR.REL cpmldr.rel
@@ -132,9 +147,9 @@ if [ "$RECORD" -eq 1 ]; then
 	cp "$ACTUAL" "$BASELINE"
 	echo "recorded baseline: $BASELINE"
 elif cmp -s "$BASELINE" "$ACTUAL"; then
-	echo "submit regression passed: $MODEL"
+	echo "submit regression passed: $TARGET_CPU (host $HOST_CPU)"
 else
-	echo "submit regression failed: $MODEL" >&2
+	echo "submit regression failed: $TARGET_CPU (host $HOST_CPU)" >&2
 	diff -u "$BASELINE" "$ACTUAL" || true
 	exit 1
 fi

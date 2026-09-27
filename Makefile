@@ -6,7 +6,9 @@
 #   3. Convert the CCP+BDOS object (cpmsys.o) from x.out to COFF
 #   4. Assemble the emulator's thin BIOS and build the emulator host program
 #
-# Generate guest system binaries: make system NAME=<name> (see scripts/sysgen.sh)
+# Generate guest system binaries: make system NAME=<name> [HOST_CPU=z8001|z8002]
+# (see scripts/sysgen.sh).  The target CPU comes from the package; HOST_CPU picks
+# the hosted emulator that runs the build and defaults to the target.
 #
 # The CP/M-8000 sources in src/cpm8k/ are checked into the repository.
 
@@ -20,7 +22,7 @@ LIBDIR = $(BUILDDIR)/lib
 FPE_Z8001_DIR = $(BUILDDIR)/fpe-z8001
 FPE_Z8002_DIR = $(BUILDDIR)/fpe-z8002
 FPE_OBJECTS = src/fpe/objects
-.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats z8002-demo-image plasmo-image dev-z8001 dev-z8002 submit-regression submit-regression-z8001 submit-regression-z8002 fpe-regression fpe-regression-z8001 fpe-regression-z8002 regenerate-fpe verify-fpe-objects
+.PHONY: all clean tools lib bios-emu bios-emu-z8001 bios-emu-z8002 emu regenerate overlay cpm8k-src system media media-formats z8002-demo-image plasmo-image dev dev-z8001 dev-z8002 submit-regression submit-regression-z8001 submit-regression-z8002 submit-regression-cross fpe-regression fpe-regression-z8001 fpe-regression-z8002 regenerate-fpe verify-fpe-objects
 
 all: emu
 
@@ -36,9 +38,10 @@ overlay:
 cpm8k-src: regenerate overlay
 
 # --- System generation: build guest binaries for a chosen BIOS ---
-# make system NAME=<name> [BIOS=<dir>] [LOADER=1]   (default M20)
+# make system NAME=<name> [BIOS=<dir>] [LOADER=1] [HOST_CPU=z8001|z8002]
+# (default M20)
 system:
-	scripts/sysgen.sh $(if $(BIOS),--bios $(BIOS),) $(if $(LOADER),--loader,) $(if $(NAME),$(NAME),m20)
+	scripts/sysgen.sh $(if $(BIOS),--bios $(BIOS),) $(if $(HOST_CPU),--host $(HOST_CPU),) $(if $(LOADER),--loader,) $(if $(NAME),$(NAME),m20)
 
 # Logical CP/M development media.  The target package declares the formats it
 # supports; no boot sectors or emulator-specific containers are generated.
@@ -55,11 +58,17 @@ z8002-demo-image:
 plasmo-image:
 	scripts/build-plasmo-hd.sh
 
+# Persistent host-backed development drive for a package: drives/dev-<name>.
+# The drive does not depend on the host; mount it in either hosted emulator.
+dev:
+	scripts/build-development-drive.sh $(if $(NAME),$(NAME),m20)
+
+# Shortcuts for the reference package of each target CPU.
 dev-z8001:
-	scripts/build-development-drive.sh z8001
+	scripts/build-development-drive.sh m20
 
 dev-z8002:
-	scripts/build-development-drive.sh z8002
+	scripts/build-development-drive.sh z8002-demo
 
 # --- Build host tools ---
 tools: $(XARCH) $(XOUT2COFF)
@@ -133,6 +142,11 @@ submit-regression-z8001: emu
 
 submit-regression-z8002: emu
 	scripts/test-submit-regression.sh z8002
+
+# Each target's pipelines on the other hosted CPU, against the same baselines.
+submit-regression-cross: emu
+	HOST_CPU=z8002 scripts/test-submit-regression.sh z8001
+	HOST_CPU=z8001 scripts/test-submit-regression.sh z8002
 
 fpe-regression: fpe-regression-z8001 fpe-regression-z8002
 

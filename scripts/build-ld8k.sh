@@ -9,22 +9,26 @@
 # and copies the result out. The recipe writes _ld8k.z8k (leading underscore)
 # so it never overwrites the running linker mid-build.
 #
-# Usage: scripts/build-ld8k.sh [output-dir]      (default: build/linker)
+# HOST_CPU (z8001|z8002, default z8001) selects the hosted emulator that runs
+# the toolchain; the output does not depend on it.
+#
+# Usage: [HOST_CPU=...] scripts/build-ld8k.sh [output-dir]
+#        (default output-dir: build/linker)
 
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-EMU_MODEL=${EMU_MODEL:-z8001}
-EMU=build/emu/cpm8k-$EMU_MODEL
+HOST_CPU=${HOST_CPU:-z8001}
+EMU=build/emu/cpm8k-$HOST_CPU
 SRC=${SRC:-src/cpm8k}
 LSRC=src/linker
 SUB=scripts/ld8k.sub
 OUT=${1:-build/linker}
 
 [ -x "$EMU" ] || { echo "error: $EMU not built -- run 'make emu' first" >&2; exit 1; }
-[ -f build/bios-emu-$EMU_MODEL/cpm.sys ] || { echo "error: build/bios-emu-$EMU_MODEL/cpm.sys missing -- run 'make bios-emu-$EMU_MODEL' first" >&2; exit 1; }
+[ -f build/bios-emu-$HOST_CPU/cpm.sys ] || { echo "error: build/bios-emu-$HOST_CPU/cpm.sys missing -- run 'make bios-emu-$HOST_CPU' first" >&2; exit 1; }
 
 DRIVE=$(mktemp -d "${TMPDIR:-/tmp}/cpm8k-ld8k.XXXXXX")
 trap 'rm -rf "$DRIVE"' EXIT INT TERM

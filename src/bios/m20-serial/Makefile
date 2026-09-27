@@ -6,10 +6,16 @@
 # initializes it for 9600 baud so MAME can expose the guest through a host PTY.
 #
 # Contract used by scripts/sysgen.sh:
-#   make -C src/bios/m20-serial bios.rel BUILDDIR=<dir> -> <dir>/bios.rel
+#   make -C src/bios/m20-serial bios.rel BUILDDIR=<dir> [HOST_CPU=z8001|z8002]
+#     -> <dir>/bios.rel
+# TARGET_CPU (this package's target CPU) is read from ./TARGET_CPU; HOST_CPU
+# (the hosted emulator that runs the toolchain) defaults to it.
 
 ROOT     := $(abspath $(CURDIR)/../../..)
 BUILDDIR ?= $(ROOT)/build/bios/m20-serial
+
+TARGET_CPU := $(shell sed -n 1p $(CURDIR)/TARGET_CPU)
+HOST_CPU ?= $(TARGET_CPU)
 
 MEDIA_FORMATS := m20-floppy-set m20-hd
 
@@ -18,7 +24,8 @@ MEDIA_FORMATS := m20-floppy-set m20-hd
 # Build the BIOS object with the guest toolchain, overlaying this package's
 # sources (if any) onto the stock M20 sources.
 bios.rel:
-	BIOS_OVERLAY=$(CURDIR) $(ROOT)/scripts/build-bios.sh $(BUILDDIR)
+	BIOS_OVERLAY=$(CURDIR) TARGET_CPU=$(TARGET_CPU) HOST_CPU=$(HOST_CPU) \
+		$(ROOT)/scripts/build-bios.sh $(BUILDDIR)
 
 media-formats:
 	@echo $(MEDIA_FORMATS)

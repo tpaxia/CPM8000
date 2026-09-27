@@ -10,32 +10,35 @@ CP/M in either Z8001 or Z8002 mode.
 
 After installing the [build prerequisites](#prerequisites), clone the repository
 with its Z8000 CPU-emulator submodule, build the hosted systems, compose the
-Z8001 development drive, and mount it as drive C:
+development drive for the stock M20 (Z8001) package, and mount it as drive C:
 
 ```sh
 git clone --recurse-submodules https://github.com/tpaxia/CPM8000.git
 cd CPM8000
 make
-make dev-z8001
+make dev NAME=m20
 build/emu/cpm8k-z8001 \
-  -d C=dir:drives/dev-z8001
+  -d C=dir:drives/dev-m20
 ```
 
 The emulator starts at the CP/M `C>` prompt with the original tools, sources,
 headers, libraries, examples, and `.sub` build recipes available. Type `exit`
-to leave it. Run the Z8002 hosted system with:
+to leave it. Run the Z8002 hosted system with the Z8002-demo package's drive:
 
 ```sh
-make dev-z8002
+make dev NAME=z8002-demo
 build/emu/cpm8k-z8002 \
-  -d C=dir:drives/dev-z8002
+  -d C=dir:drives/dev-z8002-demo
 ```
 
 Each generated drive contains the common distribution/toolchain tree plus the
-selected BIOS, FPE definitions, and conventional unsuffixed submit recipes.
-Thus `SUBMIT FPE`, `SUBMIT BIOS`, and `SUBMIT CPMSYS` build the selected target
-without mixing Z8001 and Z8002 inputs. The directories are generated and
-ignored by Git; `src/cpm8k` remains the distribution-oriented source base.
+package's BIOS, the FPE definitions for its target CPU, and conventional
+unsuffixed submit recipes. Thus `SUBMIT FPE`, `SUBMIT BIOS`, and
+`SUBMIT CPMSYS` build that package's target without mixing Z8001 and Z8002
+inputs. A drive belongs to a package, not to a hosted CPU: either executable
+can mount any drive, and the tools produce the same binaries on both. The
+directories are generated and ignored by Git; `src/cpm8k` remains the
+distribution-oriented source base.
 
 The two modes do not run the same system binary. Before
 starting the emulated CPU, the host loads the matching CPU-specific system:
@@ -236,10 +239,10 @@ At least one drive must be configured:
 
 ```sh
 # Hosted Z8001
-build/emu/cpm8k-z8001 -d C=dir:drives/dev-z8001
+build/emu/cpm8k-z8001 -d C=dir:drives/dev-m20
 
 # Hosted Z8002
-build/emu/cpm8k-z8002 -d C=dir:drives/dev-z8002
+build/emu/cpm8k-z8002 -d C=dir:drives/dev-z8002-demo
 
 # Native CP/M filesystem image
 build/emu/cpm8k-z8002 \
@@ -263,7 +266,8 @@ monitor payload and ATA image builder instead. Common tools and applications
 are expected to match. FPE, BIOS, and system artifacts have target-specific
 hashes because the call frames, BIOS, and CCP/BDOS differ. `make
 submit-regression` composes and tests both target trees against separate
-manifests in `tests/`.
+manifests in `tests/`; `make submit-regression-cross` runs each target's
+pipelines on the other hosted CPU against the same manifests.
 
 ## System generation and development media
 
@@ -275,9 +279,10 @@ boot sector.
 ### Sysgen
 
 Sysgen generates both segmented Z8001 and non-segmented Z8002 systems. Each
-BIOS package selects the hosted build CPU and system substrate (`cpmsys.rel`
-or `cpmsys2.rel`); the original compiler, assembler, and linker run inside
-that hosted CP/M environment:
+BIOS package declares its target CPU (`TARGET_CPU`) and system substrate
+(`CPMSYS`: `cpmsys.rel` or `cpmsys2.rel`). The original compiler, assembler,
+and linker run inside a hosted CP/M environment selected with `HOST_CPU`,
+which defaults to the target; either host produces identical binaries:
 
 ```text
 stock BIOS sources from src/cpm8k + src/bios/<name>/ source overlay
@@ -303,24 +308,29 @@ make system NAME=m20
 make system NAME=m20 LOADER=1
 # also build/system/m20/cpmldr.sys
 
+make system NAME=plasmo HOST_CPU=z8001
+# the Z8002 Plasmo system, built on the hosted Z8001
+
 make system NAME=foo BIOS=src/bios/foo
 ```
 
 `NAME` chooses `src/bios/<name>` by default and names both output directories.
 `BIOS=<dir>` selects another package.  `LOADER=1` builds the cold-boot loader,
-but does not run `putboot` or create bootable media.
+but does not run `putboot` or create bootable media.  `HOST_CPU=z8001|z8002`
+chooses the hosted emulator that runs the build (default: the package's target
+CPU).
 
 The BIOS-package build contract is:
 
 ```sh
-make -C src/bios/<name> bios.rel BUILDDIR=<directory>
+make -C src/bios/<name> bios.rel BUILDDIR=<directory> [HOST_CPU=z8001|z8002]
 ```
 
 The package is a source overlay: distribution BIOS sources are staged from
 `src/cpm8k`, then any `.c` or `.8kn` files in the package replace or extend
 them. Development media also apply package `.sub` overrides for target-specific
-links. The package's `CPMSYS` and `EMU_MODEL` metadata select the system object
-and hosted CPU. The [BIOS package guide](src/bios/README.md) describes the
+links. The package's `TARGET_CPU` and `CPMSYS` files select the target CPU and
+system object. The [BIOS package guide](src/bios/README.md) describes the
 stock `m20` package and the `m20-serial` variant; the
 [`z8002-demo` package](src/bios/z8002-demo/README.md) documents its complete
 native-system and MAME workflow. A target can also provide a
@@ -328,16 +338,19 @@ native-system and MAME workflow. A target can also provide a
 
 ### Logical development media
 
-For a host-backed edit/build loop, compose a persistent target drive:
+For a host-backed edit/build loop, compose a persistent drive for a package:
 
 ```sh
-make dev-z8001                 # drives/dev-z8001
-make dev-z8002                 # drives/dev-z8002
+make dev NAME=m20              # drives/dev-m20
+make dev NAME=z8002-demo       # drives/dev-z8002-demo
+make dev NAME=plasmo           # drives/dev-plasmo
 ```
 
-Each command starts from `src/cpm8k` and applies the same target selection used
-by regression and logical-media generation. Rebuilding replaces the directory
-as a unit, preventing stale files from another target from surviving.
+`make dev-z8001` and `make dev-z8002` are shortcuts for the `m20` and
+`z8002-demo` drives.  Each command starts from `src/cpm8k` and applies the same
+package staging used by regression and logical-media generation. Rebuilding
+replaces the directory as a unit, preventing stale files from surviving.  Mount
+a drive in either hosted emulator.
 
 Development media contain the common CP/M-8000 tools, sources, headers,
 libraries, examples, and self-contained submit files. A target package adds

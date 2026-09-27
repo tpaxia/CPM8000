@@ -7,22 +7,32 @@
 # directory, mounts that directory as drive C: in the emulator, runs
 # scripts/bios.sub, and copies the results (bios.rel, bios.a) back out.
 #
-# Usage: scripts/build-bios.sh [output-dir]      (default: build/bios-src)
+# TARGET_CPU (z8001|z8002, default z8001) selects the target-specific FPE
+# objects linked into bios.rel.  HOST_CPU (default: TARGET_CPU) selects the
+# hosted emulator that runs the toolchain; the result does not depend on it.
+#
+# Usage: [TARGET_CPU=...] [HOST_CPU=...] scripts/build-bios.sh [output-dir]
+#        (default output-dir: build/bios-src)
 
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-EMU_MODEL=${EMU_MODEL:-z8001}
-EMU=build/emu/cpm8k-$EMU_MODEL
+TARGET_CPU=${TARGET_CPU:-z8001}
+HOST_CPU=${HOST_CPU:-$TARGET_CPU}
+case "$HOST_CPU" in
+z8001|z8002) ;;
+*) echo "error: unsupported HOST_CPU '$HOST_CPU'" >&2; exit 2 ;;
+esac
+EMU=build/emu/cpm8k-$HOST_CPU
 SRC=${SRC:-src/cpm8k}
 SUB=scripts/bios.sub
 OUT=${1:-build/bios-src}
 
 [ -x "$EMU" ] || { echo "error: $EMU not built -- run 'make emu' first" >&2; exit 1; }
-[ -f "build/bios-emu-$EMU_MODEL/cpm.sys" ] || {
-	echo "error: build/bios-emu-$EMU_MODEL/cpm.sys missing -- run 'make bios-emu-$EMU_MODEL' first" >&2
+[ -f "build/bios-emu-$HOST_CPU/cpm.sys" ] || {
+	echo "error: build/bios-emu-$HOST_CPU/cpm.sys missing -- run 'make bios-emu-$HOST_CPU' first" >&2
 	exit 1
 }
 
@@ -47,7 +57,7 @@ trap 'rm -rf "$DRIVE"' EXIT INT TERM
 echo "staging build inputs into temp drive: $DRIVE"
 for f in $SOURCES $TOOLS; do cp "$SRC/$f" "$DRIVE/"; done
 
-case "$EMU_MODEL" in
+case "$TARGET_CPU" in
 z8001)
 	cp "src/fpe/objects/z8001/fpe.o" "$DRIVE/fpe.o"
 	cp "src/fpe/objects/z8001/fpedep.o" "$DRIVE/fpedep.o"
@@ -57,7 +67,7 @@ z8002)
 	cp "src/fpe/objects/z8002/fpedep.o" "$DRIVE/fpedep.o"
 	;;
 *)
-	echo "error: unsupported EMU_MODEL '$EMU_MODEL'" >&2
+	echo "error: unsupported TARGET_CPU '$TARGET_CPU'" >&2
 	exit 2
 	;;
 esac
