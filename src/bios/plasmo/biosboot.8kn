@@ -1,4 +1,6 @@
-;********** wboot.s -- Olivetti bootstrap writer*****
+;********** biosboot.8kn -- Plasmo machine *********
+;*
+;*	Post-boot entry: transfer vector, stack and PSA.
 ;*
 ;* 821013 S. Savitzky (Zilog) -- adapt for nonseg.
 ;* 820930 S. Savitzky (Zilog) -- created
@@ -6,8 +8,6 @@
 ;****************************************************
 
 ;  01/12/83	Adapted for the Kontron ECB/16 Z8002 (DMH)
-;  01/16/83	Added relocation code to relocate the
-;		Z8002 CP/M from 8000h to 0000h (DMH).
 __text:	.sect
 
 ;****************************************************
@@ -42,17 +42,15 @@ __text:	.sect
 ;****************************************************
 
 
-SYSTEM	.equ	00000000h	; system address (loaded here by the monitor)
+SYSTEM	.equ	00000000h	; system address (the image is loaded at 0)
 ;* System-Lo/Hi layout (port $85 = 01, System-Hi is the OS's own RAM):
 ;*   0x0000-~0x93C0 code+data+bss (cpm.flat; the Makefile checks it ends
 ;*                  below SYSPSA)
 ;*   0xB000         PSA (trap vectors, 256-byte aligned)
 ;*   ..0xBF00       system stack (grows down toward the PSA)
 ;* The PSA must lie above the whole image INCLUDING bss: trapinit writes the
-;* trap entries at SYSPSA+4..+0x17, and the CCP/BDOS bss (e.g. the CCP's
-;* _dma buffer) extends past 0x9300.  The old 0x9300 put the system-call
-;* trap vector inside _dma, so the first directory record copied there
-;* (dir) clobbered it.
+;* trap entries at SYSPSA+4..+0x17, and anything in the bss there (e.g. the
+;* CCP's _dma buffer) would overwrite the trap vectors at run time.
 SYSSTK	.equ	0BF00h		; system stack top
 SYSPSA	.equ	0B000h		; system PSA (above the OS image + bss)
 
@@ -72,9 +70,9 @@ SYSPSA	.equ	0B000h		; system PSA (above the OS image + bss)
 	jr	entry			; offset 4
 
 ;* post-boot init
-;* The monitor has already loaded the system at 0 and programmed the MMU
-;* (OS home = bank 0).  We just set up the stack + PSA and enter the BIOS.
-;* (No 0x8000->0 relocation -- we run where we were loaded.)
+;* The system image has been loaded at 0 and port $85 is at its reset
+;* value (01, System-Hi = its own RAM).  Set up the stack + PSA and enter
+;* the BIOS.  The system runs where it was loaded (no relocation).
 
 entry:	DI	VI,NVI
 	ld	r15, #SYSSTK	; init stack pointer

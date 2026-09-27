@@ -1,7 +1,7 @@
 ;******** biosasm.8kn -- Plasmo machine **********************
 ;* Top assembly module: combines the non-segmented Z8002 BIOS modules
-;* (grafted from the newos P-CP/M Kontron/Z8002 port) plus this machine's
-;* I/O module.  The .bss globals (_sysseg/_usrseg/_sysstk/_psap) and the
+;* (from the Zilog P-CP/M Kontron/Z8002 port) plus this machine's I/O
+;* module.  The .bss globals (_sysseg/_usrseg/_sysstk/_psap) and the
 ;* trap vector are defined inside the grafted modules, so this file only
 ;* pulls them together.
 ;*******************************************************************

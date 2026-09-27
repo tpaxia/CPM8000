@@ -4,7 +4,8 @@
 /*=======================================================================*/
 /*+---------------------------------------------------------------------+*/
 /*|									|*/
-/*|     CP/M-8000(tm) BIOS for the OLIVETTI M20 (Z8000)			|*/
+/*|     CP/M-8000(tm) BIOS for the Plasmo Z8002 board			|*/
+/*|     (derived from the Olivetti M20 BIOS)				|*/
 /*|									|*/
 /*|     Copyright 1984, Digital Research Inc.				|*/
 /*|									|*/
@@ -15,25 +16,13 @@
 /* Compilation information */
 /*-------------------------*/
 /*----------------------------------------------------------------------------*/
-/*To compile bios.c for cpmldr.sys the command is: zcc -c -M1 -dLOADER bios.c */
-/*This conditionally compiles bios.c leaving unrequired code out of the object*/
-/*file.									      */
-/*----------------------------------------------------------------------------*/
-/* The normal bios compile command for cpm.sys is: zcc -c -M1 bios.c 	      */
-/* This will provide the full functionallity of the bios in the object file   */
-/*---------------------------------------------------------------------------*/
-/* By compiling bios.c with the command : zcc -c -M1 -dTRANSFER bios.c        */
-/* You are provided with a bios object that allows the two floppy drives to   */
-/* have two different formats. This is left purely as an example for the      */
-/* the benefit of porting to a different format and can be modified.	      */
-/*----------------------------------------------------------------------------*/
-/* By compiling bios.c with the command: zcc -c -M1 -dsect26 bios.c	      */
-/* 8" floppy disk support is provided by conditional compilation.	      */
+/* Plasmo builds this file only for cpm.sys: zcc -c -M1 bios.c (cpmsys.sub).  */
+/* The LOADER, TRANSFER and SECT26 conditionals are M20 variants (cpmldr.sys, */
+/* extra floppy formats, 8" floppies) kept from the original source; they are */
+/* not used on Plasmo.							      */
 /*----------------------------------------------------------------------------*/
 
-#define BAUD 0   	/* Setting this define to 1 will conditionally compile*/
-			/* code setting the tty port to 1200 baud listening   */
-			/* XOFF on that port.				      */
+#define BAUD 0   	/* Keep 0.  BAUD 1 adds M20 XOFF handling to serout()  */
 
 /* #define DEBUG 1  */	/* By decommenting this define hard disk debugging */
 			/* is enabled. This provides drive, block, and     */
@@ -89,18 +78,12 @@ char copyright[] = "Copyright 1984  Digital Research Inc.";
 
 
 
-/************************************************************************/
-/* Define Interrupt Controller constants				*/
-/************************************************************************/
-
-/* The interrupt controller is an Intel 8259 left-shifted one bit	*/
-/* to allow for the word-alligned interrupt vectors of the Z8000.	*/
-
-/* === I am going to assume that this is set up in the PROM === */
+/* Plasmo has no interrupt controller and no device interrupts; the	*/
+/* BIOS runs with interrupts disabled.					*/
 
 
 /************************************************************************/ 
-/*      Define the two USART ports					*/
+/*      Console UART							*/
 /************************************************************************/
 
 /* Plasmo console: UART synthesized inside the CPLD (no discrete chip, no
@@ -120,21 +103,17 @@ char copyright[] = "Copyright 1984  Digital Research Inc.";
 #define XON	0x11		/* Control- Q			*/
 #define XOFF	0x13		/* Control- S			*/
 
-/* No counter/timer: the console has a fixed baud rate generated in the	*/
-/* CPLD, so there is no CTC/8253 to program here (unlike the Z80-SIO	*/
-/* machine this file was ported from).					*/
+/* No counter/timer: the baud rate is fixed in the CPLD.		*/
 
 /************************************************************************/
 /* Define Parallel Port constants					*/
 /************************************************************************/
 
-/* Plasmo has no parallel/printer port.  These constants are inherited,
- * unused, dead code (same as the M20 stock BIOS this file is derived from --
- * the LPT device is never selected by the default iobyte and nothing here
- * calls parout()/parordy()).  NOTE: PAR_A/PAR_B/PARCTRL's numeric values
- * happen to collide with the real console/bank-select ports ($81/$83/$87) --
- * harmless since this code path is unreachable, but don't repurpose it
- * without renumbering.							*/
+/* Plasmo has no parallel/printer port.  parout()/parordy() are kept
+ * from the M20 BIOS but are unreachable (the LPT device is never selected).
+ * NOTE: these values coincide with real Plasmo ports -- $81/$83 console
+ * UART, $85 bank register, $87 boot-ROM disable -- so do not enable this
+ * code without renumbering.						*/
 
 #define PAR_A	0x81		/* port A data (unused, dead)		*/
 #define PAR_B	0x83		/* port B data (unused, dead)		*/
@@ -147,13 +126,13 @@ char copyright[] = "Copyright 1984  Digital Research Inc.";
 /************************************************************************/
 /************************************************************************/
 /*									*/
-/* 		PROM AND HARDWARE INTERFACE				*/
+/* 		LOW-LEVEL HARDWARE INTERFACE				*/
 /*									*/
 /************************************************************************/
 /************************************************************************/
 
 /************************************************************************/
-/* Define PROM I/O Addresses and Related Constants			*/
+/* Disk and console primitives						*/
 /************************************************************************/
 /*		SEE BIOSIO.8KN FOR THESE EXTERNALS			*/
 
@@ -290,7 +269,7 @@ long vval;
 
 
 /************************************************************************/
-/*  Cross-bank block copy for the Plasmo banking MMU.			*/
+/*  Cross-bank block copy through the Plasmo bank window.		*/
 /*									*/
 /*  mem_bcp(sseg, source, dseg, dest, length) copies `length` bytes	*/
 /*  from (sseg:source) to (dseg:dest).  A pseudo-segment's high byte is	*/
@@ -462,7 +441,8 @@ char ch;
 }
 
 /************************************************************************/
-/*	Olivetti keyboard translation table.				*/
+/*	Olivetti keyboard translation table (unused on Plasmo: crtrd()	*/
+/*	returns the UART byte as-is).					*/
 /************************************************************************/
 
 #ifndef LOADER			/* NOT needed for the Loader Bios	*/
@@ -556,10 +536,9 @@ int crtrs()
 
 char crtrd()
 {
-	/* z8002: the "CRT" console IS the SIO serial terminal (KBD==RS232==SIO,
-	** single console).  Return the raw byte -- do NOT run it through the M20
-	** keyboard scan-code table kbtran[], which would mangle ASCII input
-	** (e.g. 'd' 0x64 -> 0x03).  Matches crtwr==crt_put on the output side.  */
+	/* The console is the CPLD UART (KBD == RS232).  Return the raw byte --
+	** do NOT run it through the M20 keyboard scan-code table kbtran[],
+	** which would mangle ASCII input (e.g. 'd' 0x64 -> 0x03).  */
 	return( serin(KBD) & 0xff );
 }
 #endif				/* End conditional */
@@ -573,7 +552,7 @@ int crtws()
 	return(0xFF);
 }
 
-#define crtwr crt_put		/* output routine in PROM */
+#define crtwr crt_put		/* output routine in biosio.8kn */
 
 
 /* TTY status, read, write routines */
@@ -831,16 +810,14 @@ struct	dpb	*dpbp;		/* -> disk parameter block		*/
 /*
 ** CP/M assumes that disks are made of 128-byte logical sectors.
 **
-** The Olivetti uses 256-byte sectors on its disks.  This BIOS buffers
-** a track at a time, so sector address translation is not needed.
-**
-** Sample tables are included for several different disk sizes.
+** The CompactFlash card has 512-byte sectors.  This BIOS buffers one
+** 4 KiB track (8 CF sectors) at a time, so no sector translation is
+** needed.  Drive A: is the CF card (dpb3).  dpb0-dpb2 are the M20 floppy
+** formats, kept from the original source and unused.
 */
 
-/* === Olivetti has 3 floppy formats & a hard disk === */
-
 #define SECSZ 128	/* CP/M logical sector size			*/
-#define TRKSZ  32	/* track size for floppies, 1/2 track sz for hd	*/
+#define TRKSZ  32	/* logical sectors per 4 KiB track		*/
 #define PSECSZ 512	/* physical sector size = IDE/SD sector (1:1)	*/
 #define PTRKSZ 8	/* physical sectors per 4KB track (8*512)	*/
 #ifndef	TRANSFER	/* Conditional for Normal bios 			*/
@@ -867,8 +844,6 @@ struct dpb dpb3=	/* --- 8 MiB ATA disk, 4K allocation blocks --- */
 struct dpb dpb4=	/* --- 2 side, 16*256 sector, 35 track.  280kb --- */
 	{ 32,   4,  15,   1,   0,   120,  63, 0xC0,   0,  16,   10};
 #endif			/* End conditional */	
-/*		bls = 2K       dsm = (disk size - 3 reserved tracks) / bls */
-/*		bls = 4K for hard disk (8640 - 24) / 4			   */
 #ifdef SECT26		/* Conditional for 8" floppy drives	*/
 
 /* === The Olivetti does not have 26-sector disks, but many people do.
@@ -930,9 +905,7 @@ char	xlt16[32] = { 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,15,16,
 /************************************************************************/
 /* Disk Parameter Headers						*/
 /*									*/
-/* Three disks are defined: dsk a: diskno=0, drive 0			*/
-/*			    dsk b: diskno=1, drive 1			*/
-/*			    dsk c: diskno=2, drive 10			*/
+/* One disk: A: = the CF card (dpb3).  The TRANSFER variant is M20-only.	*/
 /************************************************************************/
 
 #ifndef TRANSFER	/* Normal bios dph conditional */
@@ -975,22 +948,9 @@ dskxfer(dsk, trk, bufp, cmd)	/* transfer a disk track */
 register int  dsk, trk, cmd;
 register char *bufp;
 /*
-	     This is a handy place to keep notes on Olivetti block
-	numbering. For a floppy, bits 3-0 are sector, bit 4 is side,
-	and high-order bits are track. We define a floppy to have
-	twice as many sectors as there are on a track; thus, the
-	sector number overflows to the side bit and all is well. On
-	the hard disk, bits 4-0 are sector (there are 32 per track),
-	and the high-order bits are (track*6)+surface, where surface
-	is in the range 0..5. To make the indexing of trkbuf consistent,
-	we define a hard disk to have only 32 logical (16 physical)
-	sectors per track, like a floppy. Thus we will transfer only
-	half a track to/from the buffer at a time, and the logical
-	sector number will overflow into the real high-order bit of
-	the sector number. This works because we will always move
-	half a track at a time. The tracks and surfaces simply take
-	care of themselves, incrementing through the surfaces and
-	effectively minimizing seeks.
+	Track trk is the PTRKSZ (8) CF sectors starting at LBA trk*PTRKSZ.
+	The drive-number remapping below is M20 code; Plasmo only has
+	disk 0.
 */
 {
 	int blknum;
@@ -1016,11 +976,9 @@ register char *bufp;
 		printstr(" write");
 	crtwr(10); crtwr(13);
 #endif				/* End conditional */
-	/* z8002: the track buffer is a plain logical address in bank 0; disk_io
-	** writes it via ordinary CPU memory accesses.  Pass bufp directly -- do
-	** NOT wrap it in map_adr(), whose Z8001 segmented {seg,offset} long would
-	** be mis-read as a single word by disk_io (the high word, seg=0, was taken
-	** as the buffer -> the read stomped low memory at 0x0000).  */
+	/* The track buffer is an ordinary bank-0 address: pass bufp directly.
+	** Do NOT wrap it in map_adr() -- disk_io takes a 16-bit pointer and
+	** would use the high word of the {bank,offset} long (0) as the buffer. */
 	if (0 != disk_io(dsk, cmd, PTRKSZ, trk*PTRKSZ, bufp))
 		dskerr=1;
 	}
@@ -1156,10 +1114,10 @@ register char dsk;
 biosinit()
 {
 #ifdef DEBUG		/* Conditional banner for DEBUG */
-	printstr("\r\nCP/M-8000:  Olivetti M20 BIOS DEBUG"); 
+	printstr("\r\nCP/M-8000:  Plasmo BIOS DEBUG"); 
 #endif			/* End conditional */
         /* serinit(KBD);*/	/* DON'T init keyboard serial port	*/
-        serinit(RS232);		/* init rs232 serial port		*/
+        serinit(RS232);		/* init console UART (no-op)		*/
 
 	tbvalid = 0;		/* init disk flags			*/
 	tbdirty = 0;

@@ -1,7 +1,7 @@
-;************ biosmem2.z8k **************************
+;************ biosmem.8kn -- Plasmo machine *********
 ;*
 ;*	Memory Management for P-CP/M (tm) BIOS
-;*	for Olivetti M20 (Z8001) system.
+;*	for the Plasmo Z8002 board (port $85 bank window).
 ;*
 ;* 821013 S. Savitzky (Zilog) -- split modules
 ;* 820913 S. Savitzky (Zilog) -- created.
@@ -97,7 +97,7 @@ __text:	.sect
 
 memsc:		;memory manager system call
 				; CALLED FROM SC
-				; IN SEGMENTED MODE
+				; (non-segmented on the Z8002)
 				; rr6: source
 				; rr4: dest   / space
 				; rr2: length / 0
@@ -224,10 +224,9 @@ map_prog:			; map program addr into data
 
 	and	r6,#7F00h	; extract seg bits
 
-	; kontron:   pseudo-segment 2 is the only one with
-	;	     separate I and D spaces, and
-	;	     the program space is accessed
-	;	     as pseudo-segment 1, data space as pseudo-segment 2
+	; Split-I/D convention (from the Kontron port): pseudo-segment 2
+	; is a data bank whose program space is pseudo-segment 1.  Plasmo
+	; never uses bank 2 (see usr_data), so this is inert here.
 
 	cpb	rh6,#2
 	ret ne

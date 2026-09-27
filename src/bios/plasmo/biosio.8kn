@@ -1,8 +1,8 @@
 ;************ biosio.8kn -- Plasmo machine *********************
 ;*
 ;*	Low-level I/O for the CP/M-8000(tm) BIOS on the Plasmo machine.
-;*	Replaces the Olivetti-M20 PROM interface (disk_io/crt_put/cold_boot)
-;*	with this machine's CompactFlash disk and CPLD console UART.
+;*	disk_io/crt_put/cold_boot for this machine's CompactFlash disk and
+;*	CPLD console UART.
 ;*	Non-segmented (Z8002).  All I/O is register-indirect (@rX): some
 ;*	early-date Z8002 samples hang on direct-addressed IN/OUT (see
 ;*	README.md) -- this is free insurance against that erratum.
@@ -192,8 +192,8 @@ cp_wait:
 
 ;****************************************************
 ;*
-;* cold_boot() -- machine cold start.  The monitor has already loaded the
-;* system into System-Lo/Hi; here we just make sure the CF disk is ready.
+;* cold_boot() -- machine cold start.  The system is already loaded into
+;* System-Lo/Hi; here we just make sure the CF disk is ready.
 ;* (Serial needs no init -- see serinit() in bios.c.)
 ;*
 ;****************************************************
