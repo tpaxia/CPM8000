@@ -416,10 +416,9 @@ Z8001 and Z8002 objects reproduce exactly when rebuilt with the original guest
 assembler. See [`src/fpe/README.md`](src/fpe/README.md) for provenance and
 variant analysis.
 
-### Further implementation notes
+### Open items
 
-[`PROGRESS.md`](PROGRESS.md) contains lower-level emulator, trap, loader, and
-filesystem implementation notes.
+[`TODO.md`](TODO.md) lists what is left to be done.
 
 ## Acknowledgments
 

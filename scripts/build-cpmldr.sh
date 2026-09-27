@@ -11,13 +11,15 @@
 # Notes:
 #   - makeldr.sub compiles bios.c with `-Dloader`. That DOES produce the loader
 #     BIOS: the shipped zcc (v1.01e 12/26/84) honors -D, despite the older
-#     12/19/84 src/cpm8k/readme claiming otherwise. See PROGRESS.md.
+#     12/19/84 src/cpm8k/readme claiming otherwise.
 #   - The final `putboot cpmldr.sys a:` step in makeldr.sub writes a boot record
 #     to a bootable drive A:, which this script does not mount; that step fails
 #     harmlessly *after* cpmldr.sys has already been produced.
 #   - The loader is built with the rebuilt-from-source ld8k in src/cpm8k, so it
-#     is functional but not byte-identical to the distribution's cpmldr.sys
-#     (see the loader notes in PROGRESS.md).
+#     is functional but not byte-identical to the distribution's cpmldr.sys:
+#     the final link emits the corrected local-symbol bytes, and the shipped
+#     cpmldr.rel is an older object snapshot (its data segment is 230 bytes
+#     smaller) that the current sources do not reproduce.
 #
 # Usage: scripts/build-cpmldr.sh [output-dir]      (default: build/ldr-src)
 
