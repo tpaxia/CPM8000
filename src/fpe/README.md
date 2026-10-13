@@ -75,6 +75,11 @@ above, and carries the same additional parameter symbols.
 Run `make fpe-regression` to build and execute the same floating-point test on
 both hosted CPU targets.
 
+`VERIFICATION.md` records how the emulator was checked against Berkeley
+TestFloat, the defects found (`fint` at double precision, and a lost carry
+in `fldbcd`), and a routine-by-routine comparison with the copy of the same
+emulator in the ZEUS 3.21 kernel, which has the `fldbcd` correction.
+
 The Z8002 object is also validated through the native Z8002-demo BIOS and MAME
 machine. That path requires the BIOS to register `fp_epu` for `EPUTRAP` and to
 preserve the current TPA data bank for nonzero map-4 operand requests. A
